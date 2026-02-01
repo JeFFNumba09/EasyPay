@@ -1,4 +1,4 @@
-const { getStore } = require("@netlify/blobs");
+
 
 exports.handler = async (event) => {
   try {
