@@ -1,129 +1,89 @@
-// netlify/functions/create-paylink.js
-
-export default async (request) => {
-  // Alleen POST toestaan
-  if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
+export async function handler(event) {
   try {
-    // Env vars
-    const SERVICE_ID = process.env.PAYNL_SERVICE_ID;
-    const SERVICE_SECRET = process.env.PAYNL_SERVICE_SECRET;
-    const PAYMENT_METHOD_ID = process.env.PAYNL_PAYMENT_METHOD_ID; // bv "10" of "AT-...." afhankelijk van jouw setup
-
-    if (!SERVICE_ID || !SERVICE_SECRET) {
-      return new Response(
-        JSON.stringify({
-          error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET",
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+    if (event.httpMethod !== "POST") {
+      return json(405, { error: "Method not allowed" });
     }
 
-    // Body lezen
-    const body = await request.json();
-    const amount = Number(body.amount);
-    const customerReference = (body.customerReference || "").toString().trim(); // bv factuurnr / naam
-    const description = (body.description || "").toString().trim();
+    const { amount, description } = JSON.parse(event.body || "{}");
 
-    if (!amount || amount <= 0) {
-      return new Response(
-        JSON.stringify({ error: "Invalid amount" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
+    const serviceId = process.env.PAYNL_SERVICE_ID;            // moet SL-xxxx-xxxx zijn
+    const serviceSecret = process.env.PAYNL_SERVICE_SECRET;    // 40-char hash
+    const paymentMethodId = Number(process.env.PAYNL_PAYMENT_METHOD_ID || 961);
+
+    if (!serviceId || !serviceSecret) {
+      return json(500, { error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET" });
     }
 
-    // Pay.nl verwacht bedrag meestal in euro-centen als integer
-    const amountCents = Math.round(amount * 100);
+    // amount in centen (Paylink guide gebruikt 150 voor €1,50)  :contentReference[oaicite:3]{index=3}
+    const cents = Math.round(Number(amount) * 100);
+    if (!cents || cents <= 0) {
+      return json(400, { error: "Invalid amount" });
+    }
 
-    // Unieke reference die je later gebruikt om status te checken
-    // Als jij zelf een reference meegeeft (factuur/naam), zetten we die erachter
-    const referenceBase = `EZP-${Date.now()}`;
-    const reference = customerReference
-      ? `${referenceBase}-${customerReference.replace(/\s+/g, "_").slice(0, 40)}`
-      : referenceBase;
+    const reference = "EZP-" + Date.now();
 
-    // URL’s voor terugkoppeling
-    // returnUrl: waar de gebruiker heen gaat na betaling
-    // exchangeUrl: webhook/return endpoint (jouw exchange function)
-    const baseUrl = "https://profound-bunny-c7b7b3.netlify.app";
-    const returnUrl = `${baseUrl}/Klaar.html?reference=${encodeURIComponent(reference)}`;
-    const exchangeUrl = `${baseUrl}/.netlify/functions/exchange?reference=${encodeURIComponent(reference)}`;
+    // Paylink Order:Create endpoint  :contentReference[oaicite:4]{index=4}
+    const url = "https://connect.pay.nl/v1/orders";
 
-    // Pay.nl order aanmaken
-    // Let op: Pay.nl API kan per account iets verschillen.
-    // Deze call is de meest gebruikelijke: /v4/Transaction/start
+    const auth = "Basic " + Buffer.from(`${serviceId}:${serviceSecret}`).toString("base64");
+
     const payload = {
-      serviceId: SERVICE_ID,
-      amount: amountCents,
-      description: description || "Betaling",
-      reference,
-      // methode is optioneel; als jij iDEAL wilt forceren kan dat via paymentMethodId
-      ...(PAYMENT_METHOD_ID ? { paymentMethodId: PAYMENT_METHOD_ID } : {}),
-      returnUrl,
-      exchangeUrl,
+      amount: { value: cents, currency: "EUR" },
+      paymentMethod: { id: paymentMethodId },   // Paylink = 961  :contentReference[oaicite:5]{index=5}
+      serviceId: serviceId,                     // SL-xxxx-xxxx  :contentReference[oaicite:6]{index=6}
+      description: (description && description.trim())
+        ? description.trim().slice(0, 32)       // max 32 chars volgens guide response uitleg  :contentReference[oaicite:7]{index=7}
+        : "EazyPay betaling",
+      reference: reference
     };
 
-    const resp = await fetch("https://rest-api.pay.nl/v4/Transaction/start", {
+    const resp = await fetch(url, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        // Pay.nl authenticatie: serviceId + serviceSecret
-        Authorization: `Basic ${btoa(`${SERVICE_ID}:${SERVICE_SECRET}`)}`,
+        "accept": "application/json",
+        "content-type": "application/json",
+        "authorization": auth
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(payload)
     });
 
     const data = await resp.json().catch(() => ({}));
 
     if (!resp.ok) {
-      return new Response(
-        JSON.stringify({
-          error: "Pay.nl create order failed",
-          http_status: resp.status,
-          paynl_response: data,
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return json(resp.status, {
+        error: "Pay.nl create order failed",
+        http_status: resp.status,
+        paynl_response: data
+      });
     }
 
-    // Pay.nl response bevat meestal een checkout url:
-    // kan "paymentUrl" of "checkoutUrl" heten afhankelijk van endpoint/versie
-    const checkoutUrl =
-      data?.paymentUrl ||
-      data?.checkoutUrl ||
-      data?.url ||
-      data?.data?.paymentUrl ||
-      data?.data?.checkoutUrl;
+    const checkoutUrl = data?.links?.redirect || data?.links?.checkout;
 
     if (!checkoutUrl) {
-      return new Response(
-        JSON.stringify({
-          error: "No checkoutUrl returned by Pay.nl",
-          paynl_response: data,
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return json(500, { error: "No checkoutUrl returned by Pay.nl", paynl_response: data });
     }
 
-    return new Response(
-      JSON.stringify({
-        reference,
-        checkoutUrl,
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
+    // we geven orderId terug, handig voor status-checks
+    return json(200, {
+      reference,
+      orderId: data.orderId || data.id,
+      checkoutUrl
+    });
+
   } catch (err) {
-    return new Response(
-      JSON.stringify({
-        error: "Server error in create-paylink",
-        message: String(err?.message || err),
-      }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return json(500, { error: String(err) });
   }
-};
+}
+
+function json(statusCode, obj) {
+  return {
+    statusCode,
+    headers: {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "content-type",
+      "access-control-allow-methods": "GET,POST,OPTIONS"
+    },
+    body: JSON.stringify(obj)
+  };
+}
