@@ -14,6 +14,7 @@ exports.handler = async (event) => {
 
     const serviceId = process.env.PAYNL_SERVICE_ID;
     const serviceSecret = process.env.PAYNL_SERVICE_SECRET;
+    const paymentMethodId = process.env.PAYNL_PAYMENT_METHOD_ID; // optioneel
 
     if (!serviceId || !serviceSecret) {
       return json(500, { error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET" });
@@ -30,6 +31,11 @@ exports.handler = async (event) => {
       returnUrl: "https://profound-bunny-c7b7b3.netlify.app/klaar.html"
     };
 
+    // Als je PAYNL_PAYMENT_METHOD_ID hebt gezet, sturen we die mee
+    if (paymentMethodId) {
+      payload.paymentMethodId = paymentMethodId;
+    }
+
     const auth = Buffer.from(`${serviceId}:${serviceSecret}`).toString("base64");
 
     const payResp = await fetch("https://connect.pay.nl/v1/orders", {
@@ -44,19 +50,29 @@ exports.handler = async (event) => {
 
     const raw = await payResp.text();
 
-    let payData;
+    // Probeer JSON te lezen, maar bewaar raw altijd
+    let payData = null;
     try {
       payData = JSON.parse(raw);
     } catch {
-      return json(502, {
-        error: "Pay.nl gaf geen geldige JSON terug",
-        raw: raw.slice(0, 500)
+      payData = null;
+    }
+
+    // Als Pay.nl faalt: stuur ALLES terug zodat jij ziet waarom
+    if (!payResp.ok) {
+      return json(400, {
+        error: "Pay.nl create order failed",
+        http_status: payResp.status,
+        raw: raw.slice(0, 1200),
+        paynl_response: payData
       });
     }
 
-    if (!payResp.ok || !payData?.id || !payData?.links?.checkout) {
+    if (!payData?.id || !payData?.links?.checkout) {
       return json(400, {
-        error: "Pay.nl create order failed",
+        error: "Pay.nl response missing fields",
+        http_status: payResp.status,
+        raw: raw.slice(0, 1200),
         paynl_response: payData
       });
     }
