@@ -1,111 +1,122 @@
-export default async (req) => {
+// netlify/functions/create-paylink.js
+
+function json(statusCode, data) {
+  return {
+    statusCode,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS"
+    },
+    body: JSON.stringify(data)
+  };
+}
+
+async function upstashSet(key, value) {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return;
+
+  await fetch(`${url}/set/${encodeURIComponent(key)}/${encodeURIComponent(value)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+exports.handler = async (event) => {
+  if (event.httpMethod === "OPTIONS") return json(200, { ok: true });
+
   try {
-    if (req.method !== "POST") {
-      return json(405, { error: "Method not allowed" });
-    }
+    const serviceId = process.env.PAYNL_SERVICE_ID;
+    const serviceSecret = process.env.PAYNL_SERVICE_SECRET;
+    const paymentMethodId = process.env.PAYNL_PAYMENT_METHOD_ID || "10";
 
-    const {
-      PAYNL_SERVICE_ID,
-      PAYNL_SERVICE_SECRET,
-      PAYNL_PAYMENT_METHOD_ID
-    } = process.env;
-
-    if (!PAYNL_SERVICE_ID || !PAYNL_SERVICE_SECRET) {
+    if (!serviceId || !serviceSecret) {
       return json(500, {
         error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET"
       });
     }
 
-    const body = safeJson(req.body);
+    const body = event.body ? JSON.parse(event.body) : {};
     const amount = Number(body.amount);
-    const memo = String(body.memo || "").trim();
+    const description = (body.description || "").toString().trim();
 
     if (!amount || amount <= 0) {
       return json(400, { error: "Invalid amount" });
     }
 
-    // Pay expects amount.value as integer (ex: 1 EUR = 1, not 1.00)
-    // In their examples they use 150 for €150. :contentReference[oaicite:4]{index=4}
-    // We'll send cents? No: PAY paylink guide uses whole value in EUR (integer).
-    // So we round to 2 decimals and send as a number in EUR.
-    const amountValue = Number(amount.toFixed(2));
+    // Pay.nl verwacht vaak bedrag in centen als integer
+    const amountInCents = Math.round(amount * 100);
 
-    // Maak een nette reference: EAZYPAY-<timestamp>-<memo>
-    const ts = Date.now();
-    const cleanMemo = memo
-      .replace(/\s+/g, " ")
-      .replace(/[^a-zA-Z0-9 _\-]/g, "")
-      .slice(0, 30);
+    // Eigen referentie voor jouw systeem
+    const reference = `EZP-${Date.now()}`;
 
-    const reference = cleanMemo
-      ? `EAZYPAY-${ts}-${cleanMemo}`
-      : `EAZYPAY-${ts}`;
+    // Optionele omschrijving voor later terugvinden
+    const orderDescription = description ? `EZP ${reference} | ${description}` : `EZP ${reference}`;
 
-    const auth = "Basic " + Buffer.from(`${PAYNL_SERVICE_ID}:${PAYNL_SERVICE_SECRET}`).toString("base64");
+    // Status alvast vastleggen
+    await upstashSet(`pay:${reference}:status`, "OPEN");
+    await upstashSet(`pay:${reference}:amount`, String(amountInCents));
+    await upstashSet(`pay:${reference}:description`, orderDescription);
 
-    const payPayload = {
-      type: "paylink",
-      amount: {
-        value: amountValue,
-        currency: "EUR"
-      },
-      description: memo ? `Betaling: ${memo}` : "Paylink betaling",
-      reference,
-      paymentMethod: {
-        id: Number(PAYNL_PAYMENT_METHOD_ID || 961)
-      }
-      // Je kunt dit later uitbreiden met extra velden uit PAY docs indien nodig.
-    };
-
-    const resp = await fetch("https://connect.pay.nl/v1/orders", {
+    // Pay.nl order aanmaken via API v3
+    const paynlResp = await fetch("https://api.pay.nl/v3/orders", {
       method: "POST",
       headers: {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "authorization": auth
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceSecret}`
       },
-      body: JSON.stringify(payPayload)
+      body: JSON.stringify({
+        serviceId: serviceId,
+        amount: amountInCents,
+        currency: "EUR",
+        paymentMethodId: Number(paymentMethodId),
+        description: orderDescription,
+        reference: reference,
+        // Als Pay.nl terugkomt op deze urls, kun je later uitbreiden
+        returnUrl: "https://profound-bunny-c7b7b3.netlify.app/Klaar.html",
+        exchangeUrl: "https://profound-bunny-c7b7b3.netlify.app/.netlify/functions/status"
+      })
     });
 
-    const data = await resp.json().catch(() => ({}));
+    const rawText = await paynlResp.text();
+    let paynlData = null;
+    try {
+      paynlData = JSON.parse(rawText);
+    } catch (e) {
+      paynlData = { raw: rawText };
+    }
 
-    if (!resp.ok) {
-      return json(resp.status, {
+    if (!paynlResp.ok) {
+      return json(paynlResp.status, {
         error: "Pay.nl create order failed",
-        http_status: resp.status,
-        paynl_response: data
+        http_status: paynlResp.status,
+        paynl_response: paynlData
       });
     }
 
-    // PAY response bevat o.a. id en links.checkout :contentReference[oaicite:5]{index=5}
-    return json(200, {
-      orderId: data.id,
-      reference: data.reference,
-      checkoutUrl: data?.links?.checkout
-    });
-  } catch (e) {
-    return json(500, { error: "Server error", detail: String(e?.message || e) });
+    // Let op: afhankelijk van Pay.nl response kan dit veld anders heten
+    const checkoutUrl =
+      paynlData?.checkoutUrl ||
+      paynlData?.paymentUrl ||
+      paynlData?.links?.checkout?.href ||
+      paynlData?.links?.redirect?.href;
+
+    if (!checkoutUrl) {
+      return json(500, {
+        error: "No checkoutUrl returned by Pay.nl",
+        paynl_response: paynlData
+      });
+    }
+
+    // OrderId opslaan, handig voor status checks
+    if (paynlData?.id) {
+      await upstashSet(`pay:${reference}:orderId`, String(paynlData.id));
+    }
+
+    return json(200, { reference, checkoutUrl });
+  } catch (err) {
+    return json(500, { error: "Server error", details: String(err?.message || err) });
   }
 };
-
-function json(statusCode, obj) {
-  return new Response(JSON.stringify(obj), {
-    status: statusCode,
-    headers: {
-      "content-type": "application/json",
-      "access-control-allow-origin": "*",
-      "access-control-allow-headers": "content-type",
-      "access-control-allow-methods": "GET,POST,OPTIONS"
-    }
-  });
-}
-
-function safeJson(raw) {
-  try {
-    if (!raw) return {};
-    if (typeof raw === "string") return JSON.parse(raw);
-    return raw;
-  } catch {
-    return {};
-  }
-}
