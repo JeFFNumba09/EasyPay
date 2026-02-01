@@ -1,103 +1,102 @@
-exports.handler = async (event) => {
-  try {
-    if (event.httpMethod !== "POST") {
-      return json(405, { error: "Method not allowed" });
-    }
+const { Redis } = require("@upstash/redis");
 
-    const body = JSON.parse(event.body || "{}");
-    const amount = Number(body.amount);
-    const description = String(body.description || "").trim();
-
-    if (!amount || amount <= 0) {
-      return json(400, { error: "Invalid amount" });
-    }
-
-    const serviceId = process.env.PAYNL_SERVICE_ID;
-    const serviceSecret = process.env.PAYNL_SERVICE_SECRET;
-    const paymentMethodId = process.env.PAYNL_PAYMENT_METHOD_ID; // optioneel
-
-    if (!serviceId || !serviceSecret) {
-      return json(500, { error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET" });
-    }
-
-    const payload = {
-      type: "paylink",
-      amount: {
-        value: Number(amount.toFixed(2)),
-        currency: "EUR"
-      },
-      reference: "EZP-" + Date.now(),
-      description: description || "EazyPay betaling",
-      returnUrl: "https://profound-bunny-c7b7b3.netlify.app/klaar.html"
-    };
-
-    // Als je PAYNL_PAYMENT_METHOD_ID hebt gezet, sturen we die mee
-    if (paymentMethodId) {
-      payload.paymentMethodId = paymentMethodId;
-    }
-
-    const auth = Buffer.from(`${serviceId}:${serviceSecret}`).toString("base64");
-
-    const payResp = await fetch("https://connect.pay.nl/v1/orders", {
-      method: "POST",
-      headers: {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "authorization": "Basic " + auth
-      },
-      body: JSON.stringify(payload)
-    });
-
-    const raw = await payResp.text();
-
-    // Probeer JSON te lezen, maar bewaar raw altijd
-    let payData = null;
-    try {
-      payData = JSON.parse(raw);
-    } catch {
-      payData = null;
-    }
-
-    // Als Pay.nl faalt: stuur ALLES terug zodat jij ziet waarom
-    if (!payResp.ok) {
-      return json(400, {
-        error: "Pay.nl create order failed",
-        http_status: payResp.status,
-        raw: raw.slice(0, 1200),
-        paynl_response: payData
-      });
-    }
-
-    if (!payData?.id || !payData?.links?.checkout) {
-      return json(400, {
-        error: "Pay.nl response missing fields",
-        http_status: payResp.status,
-        raw: raw.slice(0, 1200),
-        paynl_response: payData
-      });
-    }
-
-    return json(200, {
-      checkoutUrl: payData.links.checkout,
-      orderId: payData.id,
-      reference: payload.reference
-    });
-
-  } catch (err) {
-    return json(500, {
-      error: "Server error",
-      message: err.message || String(err)
-    });
-  }
-};
+const redis = Redis.fromEnv();
 
 function json(statusCode, body) {
   return {
     statusCode,
     headers: {
-      "content-type": "application/json",
-      "access-control-allow-origin": "*"
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*"
     },
     body: JSON.stringify(body)
   };
 }
+
+exports.handler = async (event) => {
+  if (event.httpMethod !== "POST") {
+    return json(405, { error: "Method not allowed" });
+  }
+
+  const PAYNL_SERVICE_ID = process.env.PAYNL_SERVICE_ID;
+  const PAYNL_SERVICE_SECRET = process.env.PAYNL_SERVICE_SECRET;
+  const PAYNL_PAYMENT_METHOD_ID = Number(process.env.PAYNL_PAYMENT_METHOD_ID || "961");
+
+  if (!PAYNL_SERVICE_ID || !PAYNL_SERVICE_SECRET) {
+    return json(500, { error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET" });
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(event.body || "{}");
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+
+  const amount = Number(payload.amount);
+  if (!amount || amount <= 0) {
+    return json(400, { error: "Invalid amount" });
+  }
+
+  const descriptionRaw = (payload.description || "").toString().trim();
+  const description = descriptionRaw.slice(0, 32) || "EazyPay betaling";
+
+  const amountCents = Math.round(amount * 100);
+
+  const reference = `EZP-${Date.now()}`;
+
+  const exchangeUrl = "https://profound-bunny-c7b7b3.netlify.app/.netlify/functions/exchange";
+
+  const auth = Buffer.from(`${PAYNL_SERVICE_ID}:${PAYNL_SERVICE_SECRET}`).toString("base64");
+
+  const body = {
+    amount: { value: amountCents, currency: "EUR" },
+    paymentMethod: { id: PAYNL_PAYMENT_METHOD_ID },
+    serviceId: PAYNL_SERVICE_ID,
+    description,
+    reference,
+    exchangeUrl
+  };
+
+  let resp, data;
+  try {
+    resp = await fetch("https://connect.pay.nl/v1/orders", {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "authorization": `Basic ${auth}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    data = await resp.json().catch(() => ({}));
+  } catch (e) {
+    return json(500, { error: "Network error calling Pay.nl" });
+  }
+
+  if (!resp.ok) {
+    return json(resp.status, {
+      error: "Pay.nl create order failed",
+      http_status: resp.status,
+      paynl_response: data
+    });
+  }
+
+  const checkoutUrl = data?.links?.redirect || data?.links?.checkout;
+  const orderId = data?.id;
+
+  if (!checkoutUrl || !orderId) {
+    return json(500, { error: "Pay.nl response missing checkout/order id", paynl_response: data });
+  }
+
+  await redis.set(`ref:${reference}`, JSON.stringify({
+    orderId,
+    description,
+    createdAt: Date.now()
+  }), { ex: 60 * 60 * 24 });
+
+  await redis.set(`status:${reference}`, "PENDING", { ex: 60 * 60 * 24 });
+
+  return json(200, { checkoutUrl, reference });
+};
