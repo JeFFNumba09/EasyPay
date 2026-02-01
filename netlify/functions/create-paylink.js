@@ -20,7 +20,7 @@ exports.handler = async (event) => {
 
   const PAYNL_SERVICE_ID = process.env.PAYNL_SERVICE_ID;
   const PAYNL_SERVICE_SECRET = process.env.PAYNL_SERVICE_SECRET;
-  const PAYNL_PAYMENT_METHOD_ID = Number(process.env.PAYNL_PAYMENT_METHOD_ID || "961");
+  const PAYNL_PAYMENT_METHOD_ID = Number(process.env.PAYNL_PAYMENT_METHOD_ID || "10");
 
   if (!PAYNL_SERVICE_ID || !PAYNL_SERVICE_SECRET) {
     return json(500, { error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET" });
