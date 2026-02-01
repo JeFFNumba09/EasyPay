@@ -1,71 +1,39 @@
-export default async (req) => {
-  try {
-    if (req.method === "OPTIONS") {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders()
-      });
-    }
+// netlify/functions/status.js
 
-    const url = new URL(req.url);
-    const orderId = url.searchParams.get("orderId");
-
-    if (!orderId) {
-      return json(400, { error: "Missing orderId" });
-    }
-
-    // Je mag dit zonder auth doen voor basic status, maar met auth is prima. :contentReference[oaicite:6]{index=6}
-    const { PAYNL_SERVICE_ID, PAYNL_SERVICE_SECRET } = process.env;
-    const headers = {
-      "accept": "application/json",
-      ...corsHeaders()
-    };
-
-    if (PAYNL_SERVICE_ID && PAYNL_SERVICE_SECRET) {
-      headers["authorization"] =
-        "Basic " + Buffer.from(`${PAYNL_SERVICE_ID}:${PAYNL_SERVICE_SECRET}`).toString("base64");
-    }
-
-    const resp = await fetch(`https://connect.pay.nl/v1/orders/${encodeURIComponent(orderId)}/status`, {
-      method: "GET",
-      headers
-    });
-
-    const data = await resp.json().catch(() => ({}));
-
-    if (!resp.ok) {
-      return json(resp.status, {
-        error: "Pay.nl status failed",
-        http_status: resp.status,
-        paynl_response: data
-      });
-    }
-
-    // data.status.action is bijv "PAID" :contentReference[oaicite:7]{index=7}
-    return json(200, {
-      status: data?.status?.action || "UNKNOWN",
-      code: data?.status?.code ?? null,
-      raw: data
-    });
-  } catch (e) {
-    return json(500, { error: "Server error", detail: String(e?.message || e) });
-  }
-};
-
-function corsHeaders() {
+function json(statusCode, data) {
   return {
-    "access-control-allow-origin": "*",
-    "access-control-allow-headers": "content-type",
-    "access-control-allow-methods": "GET,POST,OPTIONS"
+    statusCode,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*"
+    },
+    body: JSON.stringify(data)
   };
 }
 
-function json(statusCode, obj) {
-  return new Response(JSON.stringify(obj), {
-    status: statusCode,
-    headers: {
-      "content-type": "application/json",
-      ...corsHeaders()
-    }
+async function upstashGet(key) {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+
+  const resp = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${token}` }
   });
+
+  const data = await resp.json();
+  return data?.result ?? null;
 }
+
+exports.handler = async (event) => {
+  try {
+    const reference = event.queryStringParameters?.reference;
+    if (!reference) return json(400, { error: "Missing reference" });
+
+    const status = (await upstashGet(`pay:${reference}:status`)) || "UNKNOWN";
+    const orderId = await upstashGet(`pay:${reference}:orderId`);
+
+    return json(200, { reference, status, orderId });
+  } catch (err) {
+    return json(500, { error: "Server error", details: String(err?.message || err) });
+  }
+};
