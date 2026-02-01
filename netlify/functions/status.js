@@ -1,60 +1,71 @@
-export async function handler(event) {
+export default async (req) => {
   try {
-    const serviceId = process.env.PAYNL_SERVICE_ID;
-    const serviceSecret = process.env.PAYNL_SERVICE_SECRET;
-
-    if (!serviceId || !serviceSecret) {
-      return json(500, { error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET" });
+    if (req.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders()
+      });
     }
 
-    const orderId = event.queryStringParameters?.orderId;
+    const url = new URL(req.url);
+    const orderId = url.searchParams.get("orderId");
+
     if (!orderId) {
       return json(400, { error: "Missing orderId" });
     }
 
-    const auth = "Basic " + Buffer.from(`${serviceId}:${serviceSecret}`).toString("base64");
+    // Je mag dit zonder auth doen voor basic status, maar met auth is prima. :contentReference[oaicite:6]{index=6}
+    const { PAYNL_SERVICE_ID, PAYNL_SERVICE_SECRET } = process.env;
+    const headers = {
+      "accept": "application/json",
+      ...corsHeaders()
+    };
 
-    // status endpoint hangt aan order resource (links.status in response)  :contentReference[oaicite:8]{index=8}
-    // Je kunt ook direct /v1/orders/{id}/status gebruiken:
-    const url = `https://connect.pay.nl/v1/orders/${encodeURIComponent(orderId)}/status`;
+    if (PAYNL_SERVICE_ID && PAYNL_SERVICE_SECRET) {
+      headers["authorization"] =
+        "Basic " + Buffer.from(`${PAYNL_SERVICE_ID}:${PAYNL_SERVICE_SECRET}`).toString("base64");
+    }
 
-    const resp = await fetch(url, {
+    const resp = await fetch(`https://connect.pay.nl/v1/orders/${encodeURIComponent(orderId)}/status`, {
       method: "GET",
-      headers: {
-        "accept": "application/json",
-        "authorization": auth
-      }
+      headers
     });
 
     const data = await resp.json().catch(() => ({}));
 
     if (!resp.ok) {
-      return json(resp.status, { error: "Pay.nl status failed", http_status: resp.status, paynl_response: data });
+      return json(resp.status, {
+        error: "Pay.nl status failed",
+        http_status: resp.status,
+        paynl_response: data
+      });
     }
 
-    // We vertalen naar simpele statuses
-    const action = data?.status?.action; // bijv PENDING / PAID etc (Pay.nl)
-    let status = "PENDING";
-
-    if (action === "PAID") status = "PAID";
-    else if (action === "CANCEL" || action === "FAILED" || action === "EXPIRED") status = "FAILED";
-
-    return json(200, { status, raw: data });
-
-  } catch (err) {
-    return json(500, { error: String(err) });
+    // data.status.action is bijv "PAID" :contentReference[oaicite:7]{index=7}
+    return json(200, {
+      status: data?.status?.action || "UNKNOWN",
+      code: data?.status?.code ?? null,
+      raw: data
+    });
+  } catch (e) {
+    return json(500, { error: "Server error", detail: String(e?.message || e) });
   }
+};
+
+function corsHeaders() {
+  return {
+    "access-control-allow-origin": "*",
+    "access-control-allow-headers": "content-type",
+    "access-control-allow-methods": "GET,POST,OPTIONS"
+  };
 }
 
 function json(statusCode, obj) {
-  return {
-    statusCode,
+  return new Response(JSON.stringify(obj), {
+    status: statusCode,
     headers: {
       "content-type": "application/json",
-      "access-control-allow-origin": "*",
-      "access-control-allow-headers": "content-type",
-      "access-control-allow-methods": "GET,POST,OPTIONS"
-    },
-    body: JSON.stringify(obj)
-  };
+      ...corsHeaders()
+    }
+  });
 }
