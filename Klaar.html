@@ -5,6 +5,21 @@
   <title>Betaling geslaagd</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const paymentId = params.get("paymentId");
+
+  if (paymentId) {
+    fetch("/.netlify/functions/status-set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        paymentId,
+        status: "paid"
+      })
+    });
+  }
+</script>
 
 <body>
 
@@ -13,3 +28,4 @@
 
 </body>
 </html>
+
