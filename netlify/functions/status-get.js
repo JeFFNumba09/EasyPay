@@ -1,16 +1,23 @@
-let store = {};
+async function redisGet(key) {
+  const url = `${process.env.UPSTASH_REDIS_REST_URL}/get/${encodeURIComponent(key)}`;
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
+  });
+  if (!resp.ok) throw new Error("Redis GET failed");
+  const data = await resp.json();
+  return data?.result || null;
+}
 
 export async function handler(event) {
-  const paymentId = event.queryStringParameters?.paymentId;
+  try {
+    const reference = event.queryStringParameters?.reference;
+    if (!reference) {
+      return { statusCode: 400, body: JSON.stringify({ error: "Missing reference" }) };
+    }
 
-  if (!paymentId) {
-    return { statusCode: 400, body: "Missing paymentId" };
+    const status = await redisGet(`pay:${reference}`);
+    return { statusCode: 200, body: JSON.stringify({ status: status || "UNKNOWN" }) };
+  } catch (e) {
+    return { statusCode: 500, body: JSON.stringify({ error: "Server error" }) };
   }
-
-  const status = store[paymentId] || "open";
-
-  return {
-    statusCode: 200,
-    body: JSON.stringify({ paymentId, status })
-  };
 }
