@@ -5,34 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>EazyPay Kassa</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
-      max-width: 420px;
-      margin: 0 auto;
-      text-align: center;
-    }
-    h1 { margin-bottom: 20px; }
-    input, button {
-      width: 100%;
-      font-size: 20px;
-      padding: 14px;
-      margin-top: 10px;
-      box-sizing: border-box;
-    }
-    button {
-      cursor: pointer;
-    }
-    #bedragTekst {
-      font-size: 22px;
-      font-weight: bold;
-      margin-top: 16px;
-    }
-    #qrcode {
-      margin-top: 18px;
-      display: flex;
-      justify-content: center;
-    }
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 420px; margin: 0 auto; text-align: center; }
+    input, button { width: 100%; font-size: 20px; padding: 14px; margin-top: 10px; box-sizing: border-box; }
+    #bedragTekst { font-size: 22px; font-weight: bold; margin-top: 16px; }
+    #qrcode { margin-top: 18px; display: flex; justify-content: center; }
+    #debug { margin-top: 16px; font-size: 14px; text-align: left; background: #f5f5f5; padding: 10px; border-radius: 8px; white-space: pre-wrap; }
   </style>
 </head>
 
@@ -40,98 +17,106 @@
   <h1>EazyPay Kassa</h1>
 
   <input id="bedrag" type="number" step="0.01" placeholder="Bedrag in euro" />
-
   <button id="toonQR">Toon QR</button>
 
   <div id="bedragTekst"></div>
   <div id="qrcode"></div>
+  <div id="debug">Debug: pagina geladen</div>
 
-  <!-- QRCode library -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
 
   <script>
-    const baseUrl = window.location.origin;
-
-    let currentReference = null;
-    let pollTimer = null;
-
-    document.getElementById("toonQR").addEventListener("click", async function () {
-      const bedragInput = document.getElementById("bedrag");
-      const bedrag = Number(bedragInput.value);
-
-      if (!bedrag || bedrag <= 0) {
-        alert("Vul een geldig bedrag in");
-        return;
-      }
-
-      document.getElementById("bedragTekst").innerText =
-        "Te betalen: €" + bedrag.toFixed(2);
-
-      let resp, data;
-      try {
-        resp = await fetch(`/.netlify/functions/create-paylink`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ amount: bedrag })
-});
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ amount: bedrag })
-        });
-        data = await resp.json();
-      } catch (e) {
-        alert("Netwerkfout bij create-paylink: " + (e && e.message ? e.message : e));
-  console.log("create-paylink error:", e);
-  return;
-      }
-
-      if (!resp.ok || !data.checkoutUrl || !data.reference) {
-        alert("Fout bij aanmaken Pay.nl betaling");
-        console.log(data);
-        return;
-      }
-
-      currentReference = data.reference;
-
-      const qrDiv = document.getElementById("qrcode");
-      qrDiv.innerHTML = "";
-
-      new QRCode(qrDiv, {
-        text: data.checkoutUrl,
-        width: 220,
-        height: 220,
-        correctLevel: QRCode.CorrectLevel.H
-      });
-
-      startPolling();
-    });
-
-    function startPolling() {
-      if (pollTimer) clearInterval(pollTimer);
-
-      pollTimer = setInterval(async () => {
-        if (!currentReference) return;
-
-        try {
-          const resp = await fetch(
-            fetch(`/.netlify/functions/status?reference=...`)
-${encodeURIComponent(currentReference)}`
-          );
-          const data = await resp.json();
-
-          if (data.status === "PAID") {
-            document.getElementById("bedragTekst").innerText = "Betaald";
-            clearInterval(pollTimer);
-            pollTimer = null;
-          }
-        } catch (e) {
-          // niks doen, polling blijft proberen
-        }
-      }, 2000);
+    function setDebug(msg) {
+      document.getElementById("debug").textContent = "Debug:\n" + msg;
     }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      setDebug("DOMContentLoaded OK\nZoek elementen...");
+
+      const bedragEl = document.getElementById("bedrag");
+      const knopEl = document.getElementById("toonQR");
+      const tekstEl = document.getElementById("bedragTekst");
+      const qrEl = document.getElementById("qrcode");
+
+      if (!bedragEl || !knopEl || !tekstEl || !qrEl) {
+        setDebug(
+          "Elementen missen:\n" +
+          "bedrag: " + !!bedragEl + "\n" +
+          "toonQR: " + !!knopEl + "\n" +
+          "bedragTekst: " + !!tekstEl + "\n" +
+          "qrcode: " + !!qrEl
+        );
+        return;
+      }
+
+      setDebug("Elementen gevonden.\nWacht op klik...");
+
+      knopEl.addEventListener("click", async () => {
+        try {
+          setDebug("Klik ontvangen.\nBedrag lezen...");
+          const bedrag = Number(bedragEl.value);
+
+          if (!bedrag || bedrag <= 0) {
+            alert("Vul een geldig bedrag in");
+            setDebug("Ongeldig bedrag ingevoerd.");
+            return;
+          }
+
+          tekstEl.innerText = "Te betalen: €" + bedrag.toFixed(2);
+          setDebug("Bedrag OK.\nPOST naar create-paylink...");
+
+          const resp = await fetch("/.netlify/functions/create-paylink", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount: bedrag })
+          });
+
+          setDebug("Response ontvangen.\nHTTP status: " + resp.status + "\nJSON lezen...");
+
+          const data = await resp.json();
+          setDebug("JSON:\n" + JSON.stringify(data, null, 2));
+
+          if (!resp.ok || !data.checkoutUrl || !data.reference) {
+            alert("Fout bij aanmaken Pay.nl betaling (zie debug)");
+            return;
+          }
+
+          const reference = data.reference;
+
+          qrEl.innerHTML = "";
+          new QRCode(qrEl, {
+            text: data.checkoutUrl,
+            width: 220,
+            height: 220,
+            correctLevel: QRCode.CorrectLevel.H
+          });
+
+          setDebug(
+            "QR gemaakt.\nreference: " + reference +
+            "\nPolling status elke 2 sec..."
+          );
+
+          const timer = setInterval(async () => {
+            try {
+              const r = await fetch("/.netlify/functions/status?reference=" + encodeURIComponent(reference));
+              const s = await r.json();
+
+              if (s.status === "PAID") {
+                tekstEl.innerText = "Betaald";
+                setDebug("Status = PAID\nKlaar.");
+                clearInterval(timer);
+              }
+            } catch (e) {
+              // polling mag falen, blijft proberen
+            }
+          }, 2000);
+
+        } catch (e) {
+          alert("Netwerk/JS fout. Zie debug.");
+          setDebug("Fout:\n" + (e && e.message ? e.message : String(e)));
+        }
+      });
+    });
   </script>
 </body>
 </html>
-
-
-
