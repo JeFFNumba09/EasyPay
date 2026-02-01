@@ -80,8 +80,9 @@
         });
         data = await resp.json();
       } catch (e) {
-        alert("Netwerkfout bij create-paylink");
-        return;
+        alert("Netwerkfout bij create-paylink: " + (e && e.message ? e.message : e));
+  console.log("create-paylink error:", e);
+  return;
       }
 
       if (!resp.ok || !data.checkoutUrl || !data.reference) {
@@ -131,5 +132,6 @@ ${encodeURIComponent(currentReference)}`
   </script>
 </body>
 </html>
+
 
 
