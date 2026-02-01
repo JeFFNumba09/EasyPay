@@ -1,5 +1,4 @@
 
-
 exports.handler = async (event) => {
   try {
     // Pay.nl stuurt JSON body met "object" die dezelfde structuur heeft als status response
