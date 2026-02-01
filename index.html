@@ -69,8 +69,11 @@
 
       let resp, data;
       try {
-        resp = await fetch(`fetch(`/.netlify/functions/create-paylink`, ...
-`, {
+        resp = await fetch(`/.netlify/functions/create-paylink`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ amount: bedrag })
+});
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ amount: bedrag })
@@ -128,4 +131,5 @@ ${encodeURIComponent(currentReference)}`
   </script>
 </body>
 </html>
+
 
