@@ -1,102 +1,100 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="nl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>EazyPay Kassa</title>
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 40px; }
-    h1 { margin-bottom: 20px; }
-    .wrap { max-width: 520px; margin: 0 auto; }
-    input { width: 80%; padding: 12px; font-size: 16px; margin: 8px 0; }
-    button { width: 84%; padding: 12px; font-size: 16px; cursor: pointer; margin-top: 8px; }
-    #bedragTekst { margin-top: 18px; font-size: 20px; font-weight: bold; }
-    #statusTekst { margin-top: 10px; font-size: 16px; }
-    #qrcode { margin-top: 18px; display: flex; justify-content: center; }
+    body { font-family: Arial, sans-serif; background:#f6f6f6; margin:0; }
+    .wrap { max-width: 520px; margin: 40px auto; background:#fff; padding: 28px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.08); }
+    h1 { text-align:center; margin: 0 0 20px; }
+    label { display:block; margin-top: 14px; font-weight: 600; }
+    input { width: 100%; padding: 12px; font-size: 16px; margin-top: 6px; box-sizing:border-box; }
+    button { width: 100%; margin-top: 14px; padding: 12px; font-size: 16px; cursor:pointer; }
+    .center { text-align:center; margin-top: 18px; }
+    #qrcode { margin-top: 14px; display:flex; justify-content:center; }
+    .status { margin-top: 14px; text-align:center; font-weight: 700; }
+    .muted { opacity: .75; font-weight: 400; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>EazyPay Kassa</h1>
 
-    <input id="bedrag" type="number" step="0.01" min="0.01" placeholder="Bedrag (bijv. 12.50)" />
-    <input id="omschrijving" type="text" placeholder="Omschrijving / naam / factuurnummer (optioneel)" />
+    <label for="bedrag">Bedrag (EUR)</label>
+    <input id="bedrag" type="number" step="0.01" min="0.01" placeholder="Bijv. 11.00"/>
+
+    <label for="omschrijving">Omschrijving / referentie (optioneel)</label>
+    <input id="omschrijving" type="text" maxlength="32" placeholder="Bijv. Factuur 2026-001 of Naam"/>
 
     <button id="toonQR">Toon QR</button>
 
-    <div id="bedragTekst"></div>
-    <div id="statusTekst"></div>
-    <div id="qrcode"></div>
+    <div class="center">
+      <div id="bedragTekst" class="muted"></div>
+      <div id="qrcode"></div>
+      <div id="statusTekst" class="status"></div>
+    </div>
   </div>
 
   <!-- QRCode library -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
 
   <script>
+    const baseUrl = "https://profound-bunny-c7b7b3.netlify.app";
+
     let currentReference = null;
     let pollTimer = null;
 
-    const bedragEl = document.getElementById("bedrag");
-    const omschrijvingEl = document.getElementById("omschrijving");
-    const bedragTekstEl = document.getElementById("bedragTekst");
-    const statusTekstEl = document.getElementById("statusTekst");
-    const qrDiv = document.getElementById("qrcode");
+    const elBedrag = document.getElementById("bedrag");
+    const elOms = document.getElementById("omschrijving");
+    const elBedragTekst = document.getElementById("bedragTekst");
+    const elStatusTekst = document.getElementById("statusTekst");
+    const elQr = document.getElementById("qrcode");
 
     document.getElementById("toonQR").addEventListener("click", async () => {
-      const bedrag = Number(bedragEl.value);
+      const bedrag = Number(elBedrag.value);
 
       if (!bedrag || bedrag <= 0) {
         alert("Vul een geldig bedrag in");
         return;
       }
 
-      bedragTekstEl.textContent = "Te betalen: €" + bedrag.toFixed(2);
-      statusTekstEl.textContent = "";
-      qrDiv.innerHTML = "";
-      currentReference = null;
+      elBedragTekst.innerText = "Te betalen: €" + bedrag.toFixed(2);
+      elStatusTekst.innerText = "";
+      elQr.innerHTML = "";
 
-      const payload = {
-        amount: bedrag,
-        description: (omschrijvingEl.value || "").trim()
-      };
+      const omschrijving = (elOms.value || "").trim().slice(0, 32);
 
+      let resp, data;
       try {
-        const resp = await fetch("/.netlify/functions/create-paylink", {
+        resp = await fetch(`${baseUrl}/.netlify/functions/create-paylink`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
+          body: JSON.stringify({ amount: bedrag, description: omschrijving })
         });
 
-        const data = await resp.json().catch(() => ({}));
-
-        if (!resp.ok) {
-          alert("Fout bij aanmaken betaling:\n\n" + JSON.stringify(data, null, 2));
-          console.error("create-paylink error:", data);
-          return;
-        }
-
-        if (!data.checkoutUrl || !data.reference) {
-          alert("Fout bij aanmaken betaling (onvolledige response).");
-          console.error("create-paylink missing fields:", data);
-          return;
-        }
-
-        currentReference = data.reference;
-
-        new QRCode(qrDiv, {
-          text: data.checkoutUrl,
-          width: 220,
-          height: 220,
-          correctLevel: QRCode.CorrectLevel.H
-        });
-
-        statusTekstEl.textContent = "Wachten op betaling...";
-        startPolling();
-
-      } catch (err) {
-        alert("Netwerkfout bij create-paylink");
-        console.error(err);
+        data = await resp.json().catch(() => ({}));
+      } catch (e) {
+        alert("Netwerkfout bij aanmaken betaling");
+        return;
       }
+
+      if (!resp.ok || !data.checkoutUrl || !data.reference) {
+        const msg = data && data.error ? String(data.error) : "Fout bij aanmaken betaling";
+        alert(msg);
+        return;
+      }
+
+      currentReference = data.reference;
+
+      new QRCode(elQr, {
+        text: data.checkoutUrl,
+        width: 220,
+        height: 220,
+        correctLevel: QRCode.CorrectLevel.H
+      });
+
+      startPolling();
     });
 
     function startPolling() {
@@ -106,19 +104,20 @@
         if (!currentReference) return;
 
         try {
-          const resp = await fetch(`/.netlify/functions/status?reference=${encodeURIComponent(currentReference)}`);
+          const resp = await fetch(`${baseUrl}/.netlify/functions/status?reference=${encodeURIComponent(currentReference)}`);
           const data = await resp.json().catch(() => ({}));
 
-          // Verwacht: { status: "PAID" | "OPEN" | "UNKNOWN" | ... }
           if (data.status === "PAID") {
-            statusTekstEl.textContent = "Betaald";
+            elStatusTekst.innerText = "Betaald";
             clearInterval(pollTimer);
             pollTimer = null;
-          } else if (data.status && data.status !== "OPEN") {
-            statusTekstEl.textContent = "Status: " + data.status;
+          } else if (data.status === "PENDING") {
+            elStatusTekst.innerText = "Wachten op betaling";
+          } else if (data.status === "FAILED") {
+            elStatusTekst.innerText = "Mislukt";
           }
-        } catch (err) {
-          console.error("status poll error:", err);
+        } catch (e) {
+          /* geen popup spam tijdens polling */
         }
       }, 2000);
     }
