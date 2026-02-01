@@ -4,9 +4,9 @@ exports.handler = async (event) => {
       return json(405, { error: "Method not allowed" });
     }
 
-    const body = safeJson(event.body);
-    const amount = Number(body?.amount);
-    const descriptionRaw = (body?.description || "").toString().trim();
+    const body = JSON.parse(event.body || "{}");
+    const amount = Number(body.amount);
+    const description = String(body.description || "").trim();
 
     if (!amount || amount <= 0) {
       return json(400, { error: "Invalid amount" });
@@ -19,67 +19,69 @@ exports.handler = async (event) => {
       return json(500, { error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET" });
     }
 
-    const baseUrl = "https://profound-bunny-c7b7b3.netlify.app";
-
-    const reference = "EZP-" + Date.now();
-    const amountValue = Number(amount.toFixed(2));
-
-    const description =
-      descriptionRaw.length > 0
-        ? `EazyPay: ${descriptionRaw}`.slice(0, 80)
-        : "EazyPay betaling";
-
     const payload = {
       type: "paylink",
-      amount: { value: amountValue, currency: "EUR" },
-      reference,
-      description,
-      returnUrl: `${baseUrl}/klaar.html`
+      amount: {
+        value: Number(amount.toFixed(2)),
+        currency: "EUR"
+      },
+      reference: "EZP-" + Date.now(),
+      description: description || "EazyPay betaling",
+      returnUrl: "https://profound-bunny-c7b7b3.netlify.app/klaar.html"
     };
 
-    const auth = "Basic " + Buffer.from(`${serviceId}:${serviceSecret}`).toString("base64");
+    const auth = Buffer.from(`${serviceId}:${serviceSecret}`).toString("base64");
 
-    const resp = await fetch("https://connect.pay.nl/v1/orders", {
+    const payResp = await fetch("https://connect.pay.nl/v1/orders", {
       method: "POST",
       headers: {
         "accept": "application/json",
         "content-type": "application/json",
-        "authorization": auth
+        "authorization": "Basic " + auth
       },
       body: JSON.stringify(payload)
     });
 
-    const data = await resp.json().catch(() => null);
+    const raw = await payResp.text();
 
-    if (!resp.ok || !data?.id || !data?.links?.checkout) {
-      return json(500, {
+    let payData;
+    try {
+      payData = JSON.parse(raw);
+    } catch {
+      return json(502, {
+        error: "Pay.nl gaf geen geldige JSON terug",
+        raw: raw.slice(0, 500)
+      });
+    }
+
+    if (!payResp.ok || !payData?.id || !payData?.links?.checkout) {
+      return json(400, {
         error: "Pay.nl create order failed",
-        details: data || { httpStatus: resp.status }
+        paynl_response: payData
       });
     }
 
     return json(200, {
-      reference,
-      orderId: data.id,
-      checkoutUrl: data.links.checkout
+      checkoutUrl: payData.links.checkout,
+      orderId: payData.id,
+      reference: payload.reference
     });
 
   } catch (err) {
-    return json(500, { error: "Server error", message: String(err?.message || err) });
+    return json(500, {
+      error: "Server error",
+      message: err.message || String(err)
+    });
   }
 };
 
-function json(statusCode, obj) {
+function json(statusCode, body) {
   return {
     statusCode,
     headers: {
       "content-type": "application/json",
       "access-control-allow-origin": "*"
     },
-    body: JSON.stringify(obj)
+    body: JSON.stringify(body)
   };
-}
-
-function safeJson(str) {
-  try { return JSON.parse(str || "{}"); } catch { return {}; }
 }
