@@ -1,25 +1,54 @@
-async function redisSet(key, value) {
-  const url = `${process.env.UPSTASH_REDIS_REST_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(value)}`;
-  const resp = await fetch(url, {
-    headers: { Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
-  });
-  if (!resp.ok) throw new Error("Redis SET failed");
-}
+const { getStore } = require("@netlify/blobs");
 
-export async function handler(event) {
+exports.handler = async (event) => {
   try {
-    const body = JSON.parse(event.body || "{}");
-    const order = body.object || body;
+    // Pay.nl stuurt JSON body met "object" die dezelfde structuur heeft als status response
+    const body = safeJson(event.body);
+    const obj = body?.object;
 
-    const reference = order.reference || order?.data?.reference;
-    const statusAction = order?.status?.action;
+    const reference = (obj?.reference || "").toString().trim();
+    const orderId = (obj?.id || "").toString().trim();
 
-    if (reference && statusAction) {
-      await redisSet(`pay:${reference}`, statusAction);
+    const action = obj?.status?.action;
+    const code = obj?.status?.code;
+
+    if (!reference) {
+      return json(200, { ok: true });
     }
 
-    return { statusCode: 200, body: "OK" };
-  } catch (e) {
-    return { statusCode: 200, body: "OK" };
+    const store = getStore("eazypay-status");
+    const saved = await store.getJSON(reference);
+
+    const newStatus =
+      (action === "PAID" || code === 100) ? "PAID"
+      : (action ? String(action) : "PENDING");
+
+    await store.setJSON(reference, {
+      ...(saved || {}),
+      orderId: saved?.orderId || orderId,
+      status: newStatus,
+      exchangeAt: new Date().toISOString()
+    });
+
+    // Belangrijk: altijd een geldige response teruggeven
+    return json(200, { ok: true });
+  } catch (err) {
+    // Ook bij fout: 200 teruggeven, anders gaat Pay.nl retries doen
+    return json(200, { ok: true, error: String(err?.message || err) });
   }
+};
+
+function safeJson(str) {
+  try { return JSON.parse(str || "{}"); } catch { return {}; }
+}
+
+function json(statusCode, obj) {
+  return {
+    statusCode,
+    headers: {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*"
+    },
+    body: JSON.stringify(obj)
+  };
 }
