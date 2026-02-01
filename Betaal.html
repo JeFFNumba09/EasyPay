@@ -1,0 +1,23 @@
+  <title>Betalen</title>
+
+  <h1>Betalen</h1>
+
+  <p id="bedrag"></p>
+
+  <button onclick="betaal()">Betaal</button>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const bedrag = params.get("bedrag");
+
+    document.getElementById("bedrag").innerText =
+      "Te betalen bedrag: €" + bedrag;
+
+    function betaal() {
+      window.location.href = "klaar.html";
+    }
+  </script>
+
+</body>
+</html>
+

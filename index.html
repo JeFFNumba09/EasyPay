@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <title>QR Betalen</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+
+  <h1>QR Betalen – Kassa</h1>
+
+  <input id="bedrag" type="number" placeholder="Bedrag in euro">
+
+  <br><br>
+
+  <button id="toonQR">Toon QR</button>
+
+  <p id="bedragTekst"></p>
+
+  <div id="qrcode"></div>
+
+  <!-- QR library -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
+
+  <script>
+    const baseUrl = "https://singular-basbousa-adb0df.netlify.app/";
+
+    document.getElementById("toonQR").addEventListener("click", function () {
+      const bedrag = document.getElementById("bedrag").value;
+
+      if (!bedrag || bedrag <= 0) {
+        alert("Vul een geldig bedrag in");
+        return;
+      }
+
+      document.getElementById("bedragTekst").innerText =
+        "Te betalen: €" + bedrag;
+
+      const qrDiv = document.getElementById("qrcode");
+      qrDiv.innerHTML = "";
+
+      new QRCode(qrDiv, {
+        text: baseUrl + "/betaal.html?bedrag=" + bedrag,
+        width: 200,
+        height: 200
+      });
+    });
+  </script>
+
+</body>
+</html>
