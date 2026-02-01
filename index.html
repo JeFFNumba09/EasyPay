@@ -1,79 +1,128 @@
-<!-- QRCode library -->
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
-
-<script>
-  // Basis URL van je Netlify site
-  const baseUrl = "https://profound-bunny-c7b7b3.netlify.app";
-
-  let currentReference = null;
-  let pollTimer = null;
-
-  // Klik op "Toon QR"
-  document.getElementById("toonQR").addEventListener("click", async function () {
-    const bedragInput = document.getElementById("bedrag");
-    const bedrag = Number(bedragInput.value);
-
-    if (!bedrag || bedrag <= 0) {
-      alert("Vul een geldig bedrag in");
-      return;
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EazyPay Kassa</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 420px;
+      margin: 0 auto;
+      text-align: center;
     }
-
-    // Tekst tonen
-    document.getElementById("bedragTekst").innerText =
-      "Te betalen: €" + bedrag.toFixed(2);
-
-    // Pay.nl paylink aanvragen via Netlify function
-    const resp = await fetch(`${baseUrl}/.netlify/functions/create-paylink`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ amount: bedrag })
-    });
-
-    const data = await resp.json();
-
-    if (!resp.ok || !data.checkoutUrl || !data.reference) {
-      alert("Fout bij aanmaken Pay.nl betaling");
-      console.error(data);
-      return;
+    h1 { margin-bottom: 20px; }
+    input, button {
+      width: 100%;
+      font-size: 20px;
+      padding: 14px;
+      margin-top: 10px;
+      box-sizing: border-box;
     }
-
-    currentReference = data.reference;
-
-    // QR leegmaken en opnieuw tekenen
-    const qrDiv = document.getElementById("qrcode");
-    qrDiv.innerHTML = "";
-
-    new QRCode(qrDiv, {
-      text: data.checkoutUrl,
-      width: 220,
-      height: 220,
-      correctLevel: QRCode.CorrectLevel.H
-    });
-
-    // Start status polling
-    startPolling();
-  });
-
-  function startPolling() {
-    if (pollTimer) {
-      clearInterval(pollTimer);
+    button {
+      cursor: pointer;
     }
+    #bedragTekst {
+      font-size: 22px;
+      font-weight: bold;
+      margin-top: 16px;
+    }
+    #qrcode {
+      margin-top: 18px;
+      display: flex;
+      justify-content: center;
+    }
+  </style>
+</head>
 
-    pollTimer = setInterval(async () => {
-      if (!currentReference) return;
+<body>
+  <h1>EazyPay Kassa</h1>
 
-      const resp = await fetch(
-        `${baseUrl}/.netlify/functions/status?reference=${encodeURIComponent(currentReference)}`
-      );
-      const data = await resp.json();
+  <input id="bedrag" type="number" step="0.01" placeholder="Bedrag in euro" />
 
-      if (data.status === "PAID") {
-        document.getElementById("bedragTekst").innerText = "Betaald";
-        clearInterval(pollTimer);
-        pollTimer = null;
+  <button id="toonQR">Toon QR</button>
+
+  <div id="bedragTekst"></div>
+  <div id="qrcode"></div>
+
+  <!-- QRCode library -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
+
+  <script>
+    const baseUrl = "https://profound-bunny-c7b7b3.netlify.app";
+
+    let currentReference = null;
+    let pollTimer = null;
+
+    document.getElementById("toonQR").addEventListener("click", async function () {
+      const bedragInput = document.getElementById("bedrag");
+      const bedrag = Number(bedragInput.value);
+
+      if (!bedrag || bedrag <= 0) {
+        alert("Vul een geldig bedrag in");
+        return;
       }
-    }, 2000);
-  }
-</script>
+
+      document.getElementById("bedragTekst").innerText =
+        "Te betalen: €" + bedrag.toFixed(2);
+
+      let resp, data;
+      try {
+        resp = await fetch(`${baseUrl}/.netlify/functions/create-paylink`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amount: bedrag })
+        });
+        data = await resp.json();
+      } catch (e) {
+        alert("Netwerkfout bij create-paylink");
+        return;
+      }
+
+      if (!resp.ok || !data.checkoutUrl || !data.reference) {
+        alert("Fout bij aanmaken Pay.nl betaling");
+        console.log(data);
+        return;
+      }
+
+      currentReference = data.reference;
+
+      const qrDiv = document.getElementById("qrcode");
+      qrDiv.innerHTML = "";
+
+      new QRCode(qrDiv, {
+        text: data.checkoutUrl,
+        width: 220,
+        height: 220,
+        correctLevel: QRCode.CorrectLevel.H
+      });
+
+      startPolling();
+    });
+
+    function startPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+
+      pollTimer = setInterval(async () => {
+        if (!currentReference) return;
+
+        try {
+          const resp = await fetch(
+            `${baseUrl}/.netlify/functions/status?reference=${encodeURIComponent(currentReference)}`
+          );
+          const data = await resp.json();
+
+          if (data.status === "PAID") {
+            document.getElementById("bedragTekst").innerText = "Betaald";
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
+        } catch (e) {
+          // niks doen, polling blijft proberen
+        }
+      }, 2000);
+    }
+  </script>
+</body>
+</html>
