@@ -1,50 +1,70 @@
-export async function handler(event) {
+export default async (req) => {
   try {
-    if (event.httpMethod !== "POST") {
+    if (req.method !== "POST") {
       return json(405, { error: "Method not allowed" });
     }
 
-    const { amount, description } = JSON.parse(event.body || "{}");
+    const {
+      PAYNL_SERVICE_ID,
+      PAYNL_SERVICE_SECRET,
+      PAYNL_PAYMENT_METHOD_ID
+    } = process.env;
 
-    const serviceId = process.env.PAYNL_SERVICE_ID;            // moet SL-xxxx-xxxx zijn
-    const serviceSecret = process.env.PAYNL_SERVICE_SECRET;    // 40-char hash
-    const paymentMethodId = Number(process.env.PAYNL_PAYMENT_METHOD_ID || 961);
-
-    if (!serviceId || !serviceSecret) {
-      return json(500, { error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET" });
+    if (!PAYNL_SERVICE_ID || !PAYNL_SERVICE_SECRET) {
+      return json(500, {
+        error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET"
+      });
     }
 
-    // amount in centen (Paylink guide gebruikt 150 voor €1,50)  :contentReference[oaicite:3]{index=3}
-    const cents = Math.round(Number(amount) * 100);
-    if (!cents || cents <= 0) {
+    const body = safeJson(req.body);
+    const amount = Number(body.amount);
+    const memo = String(body.memo || "").trim();
+
+    if (!amount || amount <= 0) {
       return json(400, { error: "Invalid amount" });
     }
 
-    const reference = "EZP-" + Date.now();
+    // Pay expects amount.value as integer (ex: 1 EUR = 1, not 1.00)
+    // In their examples they use 150 for €150. :contentReference[oaicite:4]{index=4}
+    // We'll send cents? No: PAY paylink guide uses whole value in EUR (integer).
+    // So we round to 2 decimals and send as a number in EUR.
+    const amountValue = Number(amount.toFixed(2));
 
-    // Paylink Order:Create endpoint  :contentReference[oaicite:4]{index=4}
-    const url = "https://connect.pay.nl/v1/orders";
+    // Maak een nette reference: EAZYPAY-<timestamp>-<memo>
+    const ts = Date.now();
+    const cleanMemo = memo
+      .replace(/\s+/g, " ")
+      .replace(/[^a-zA-Z0-9 _\-]/g, "")
+      .slice(0, 30);
 
-    const auth = "Basic " + Buffer.from(`${serviceId}:${serviceSecret}`).toString("base64");
+    const reference = cleanMemo
+      ? `EAZYPAY-${ts}-${cleanMemo}`
+      : `EAZYPAY-${ts}`;
 
-    const payload = {
-      amount: { value: cents, currency: "EUR" },
-      paymentMethod: { id: paymentMethodId },   // Paylink = 961  :contentReference[oaicite:5]{index=5}
-      serviceId: serviceId,                     // SL-xxxx-xxxx  :contentReference[oaicite:6]{index=6}
-      description: (description && description.trim())
-        ? description.trim().slice(0, 32)       // max 32 chars volgens guide response uitleg  :contentReference[oaicite:7]{index=7}
-        : "EazyPay betaling",
-      reference: reference
+    const auth = "Basic " + Buffer.from(`${PAYNL_SERVICE_ID}:${PAYNL_SERVICE_SECRET}`).toString("base64");
+
+    const payPayload = {
+      type: "paylink",
+      amount: {
+        value: amountValue,
+        currency: "EUR"
+      },
+      description: memo ? `Betaling: ${memo}` : "Paylink betaling",
+      reference,
+      paymentMethod: {
+        id: Number(PAYNL_PAYMENT_METHOD_ID || 961)
+      }
+      // Je kunt dit later uitbreiden met extra velden uit PAY docs indien nodig.
     };
 
-    const resp = await fetch(url, {
+    const resp = await fetch("https://connect.pay.nl/v1/orders", {
       method: "POST",
       headers: {
         "accept": "application/json",
         "content-type": "application/json",
         "authorization": auth
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payPayload)
     });
 
     const data = await resp.json().catch(() => ({}));
@@ -57,33 +77,35 @@ export async function handler(event) {
       });
     }
 
-    const checkoutUrl = data?.links?.redirect || data?.links?.checkout;
-
-    if (!checkoutUrl) {
-      return json(500, { error: "No checkoutUrl returned by Pay.nl", paynl_response: data });
-    }
-
-    // we geven orderId terug, handig voor status-checks
+    // PAY response bevat o.a. id en links.checkout :contentReference[oaicite:5]{index=5}
     return json(200, {
-      reference,
-      orderId: data.orderId || data.id,
-      checkoutUrl
+      orderId: data.id,
+      reference: data.reference,
+      checkoutUrl: data?.links?.checkout
     });
-
-  } catch (err) {
-    return json(500, { error: String(err) });
+  } catch (e) {
+    return json(500, { error: "Server error", detail: String(e?.message || e) });
   }
-}
+};
 
 function json(statusCode, obj) {
-  return {
-    statusCode,
+  return new Response(JSON.stringify(obj), {
+    status: statusCode,
     headers: {
       "content-type": "application/json",
       "access-control-allow-origin": "*",
       "access-control-allow-headers": "content-type",
       "access-control-allow-methods": "GET,POST,OPTIONS"
-    },
-    body: JSON.stringify(obj)
-  };
+    }
+  });
+}
+
+function safeJson(raw) {
+  try {
+    if (!raw) return {};
+    if (typeof raw === "string") return JSON.parse(raw);
+    return raw;
+  } catch {
+    return {};
+  }
 }
