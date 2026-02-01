@@ -50,7 +50,7 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
 
   <script>
-    const baseUrl = "https://profound-bunny-c7b7b3.netlify.app";
+    const baseUrl = window.location.origin;
 
     let currentReference = null;
     let pollTimer = null;
@@ -69,7 +69,8 @@
 
       let resp, data;
       try {
-        resp = await fetch(`${baseUrl}/.netlify/functions/create-paylink`, {
+        resp = await fetch(`fetch(`/.netlify/functions/create-paylink`, ...
+`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ amount: bedrag })
@@ -109,7 +110,8 @@
 
         try {
           const resp = await fetch(
-            `${baseUrl}/.netlify/functions/status?reference=${encodeURIComponent(currentReference)}`
+            fetch(`/.netlify/functions/status?reference=...`)
+${encodeURIComponent(currentReference)}`
           );
           const data = await resp.json();
 
@@ -126,3 +128,4 @@
   </script>
 </body>
 </html>
+
