@@ -5,23 +5,64 @@
   <title>EazyPay Kassa</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
+  <!-- QRCode library -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
 
   <style>
-    body { font-family: Arial, sans-serif; background: #fff; text-align: center; padding: 40px; }
-    h1 { margin-bottom: 30px; }
-    input { width: 260px; padding: 10px; font-size: 16px; margin-bottom: 10px; }
-    button { width: 260px; padding: 12px; font-size: 16px; cursor: pointer; margin-bottom: 20px; }
-    #bedragTekst { font-size: 18px; margin-bottom: 15px; font-weight: bold; }
-    #qrcode { margin-top: 20px; }
+    body {
+      font-family: Arial, sans-serif;
+      background: #ffffff;
+      text-align: center;
+      padding: 40px;
+    }
+
+    h1 {
+      margin-bottom: 30px;
+    }
+
+    input {
+      width: 260px;
+      padding: 10px;
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+
+    button {
+      width: 260px;
+      padding: 12px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-bottom: 20px;
+    }
+
+    #bedragTekst {
+      font-size: 18px;
+      margin-bottom: 15px;
+      font-weight: bold;
+    }
+
+    #qrcode {
+      margin-top: 20px;
+    }
   </style>
 </head>
 
 <body>
+
   <h1>EazyPay Kassa</h1>
 
-  <input id="bedrag" type="number" step="0.01" placeholder="Bedrag (bijv. 12.34)" /><br>
-  <input id="omschrijving" type="text" placeholder="Omschrijving / factuurnummer" /><br>
+  <input
+    id="bedrag"
+    type="number"
+    step="0.01"
+    placeholder="Bedrag (bijv. 12.34)"
+  /><br>
+
+  <input
+    id="omschrijving"
+    type="text"
+    placeholder="Omschrijving / naam / factuurnr"
+  /><br>
 
   <button id="toonQR">Toon QR</button>
 
@@ -31,7 +72,7 @@
   <script>
     const baseUrl = "https://profound-bunny-c7b7b3.netlify.app";
 
-    let currentReference = null;   // kan reference of orderId zijn, we vangen beide af
+    let currentReference = null;
     let pollTimer = null;
 
     const bedragEl = document.getElementById("bedrag");
@@ -61,26 +102,38 @@
           })
         });
 
-        const data = await resp.json().catch(() => ({}));
+        const data = await resp.json().catch(() => null);
 
-        // checkoutUrl kan verschillende namen hebben, vangen we af
-        const checkoutUrl = data.checkoutUrl || data.url || data.paymentUrl || data.redirectUrl;
-
-        // reference kan verschillende namen hebben, vangen we af
-        const ref = data.reference || data.orderId || data.paymentReference || data.transactionId;
-
-        if (!resp.ok || !checkoutUrl || !ref) {
-          const msg =
-            data.message ||
-            data.error ||
-            data.errors?.[0] ||
-            "Onbekende fout. Open DevTools, tab Network, en bekijk create-paylink response.";
-          alert("Fout bij aanmaken betaling: " + msg);
-          console.error("create-paylink response:", data);
+        // 🔴 HIER ZIEN WE NU DE ECHTE PAY.NL FOUT
+        if (!resp.ok) {
+          alert(
+            "Fout bij aanmaken betaling:\n\n" +
+            (data ? JSON.stringify(data, null, 2) : "Geen response van server")
+          );
+          console.error("create-paylink error:", data);
           return;
         }
 
-        currentReference = String(ref);
+        const checkoutUrl =
+          data.checkoutUrl ||
+          data.url ||
+          data.paymentUrl ||
+          data.redirectUrl;
+
+        const reference =
+          data.reference ||
+          data.orderId ||
+          data.transactionId;
+
+        if (!checkoutUrl || !reference) {
+          alert(
+            "Onvolledige Pay.nl response:\n\n" +
+            JSON.stringify(data, null, 2)
+          );
+          return;
+        }
+
+        currentReference = String(reference);
 
         new QRCode(qrEl, {
           text: checkoutUrl,
@@ -92,7 +145,7 @@
         startPolling();
 
       } catch (err) {
-        alert("Netwerkfout bij create-paylink");
+        alert("Netwerkfout bij aanmaken betaling");
         console.error(err);
       }
     });
@@ -104,14 +157,13 @@
         if (!currentReference) return;
 
         try {
-          // jouw eerdere test gebruikte reference=...
-          // dus we proberen eerst reference
+          // eerst proberen met reference
           let resp = await fetch(
             `${baseUrl}/.netlify/functions/status?reference=${encodeURIComponent(currentReference)}`,
             { cache: "no-store" }
           );
 
-          // als dat geen 200 is, proberen we orderId als fallback
+          // fallback: orderId
           if (!resp.ok) {
             resp = await fetch(
               `${baseUrl}/.netlify/functions/status?orderId=${encodeURIComponent(currentReference)}`,
@@ -119,9 +171,9 @@
             );
           }
 
-          const data = await resp.json().catch(() => ({}));
+          const data = await resp.json().catch(() => null);
 
-          if (data.status === "PAID") {
+          if (data && data.status === "PAID") {
             tekstEl.innerText = "Betaald";
             qrEl.innerHTML = "";
             clearInterval(pollTimer);
@@ -139,5 +191,6 @@
       }, 2000);
     }
   </script>
+
 </body>
 </html>
