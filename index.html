@@ -1,83 +1,79 @@
-<!DOCTYPE html>
-<html lang="nl">
-<head>
-  <meta charset="UTF-8">
-  <title>QR Betalen – Kassa</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
+<!-- QRCode library -->
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
 
-<body>
+<script>
+  // Basis URL van je Netlify site
+  const baseUrl = "https://profound-bunny-c7b7b3.netlify.app";
 
-  <h1>QR Betalen</h1>
+  let currentReference = null;
+  let pollTimer = null;
 
-  <input
-    id="bedrag"
-    type="number"
-    placeholder="Bedrag in euro"
-  >
+  // Klik op "Toon QR"
+  document.getElementById("toonQR").addEventListener("click", async function () {
+    const bedragInput = document.getElementById("bedrag");
+    const bedrag = Number(bedragInput.value);
 
-  <br><br>
+    if (!bedrag || bedrag <= 0) {
+      alert("Vul een geldig bedrag in");
+      return;
+    }
 
-  <button id="toonQR">Toon QR</button>
+    // Tekst tonen
+    document.getElementById("bedragTekst").innerText =
+      "Te betalen: €" + bedrag.toFixed(2);
 
-  <p id="statusTekst"></p>
-
-  <div id="qrcode"></div>
-
-  <!-- QR library -->
-  <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
-
-  <script>
-    // 🔴 VERVANG DIT DOOR JOUW ECHTE NETLIFY URL
-    const baseUrl = "https://profound-bunny-c7b7b3.netlify.app/";
-
-    document.getElementById("toonQR").addEventListener("click", async function () {
-      const bedrag = document.getElementById("bedrag").value;
-
-      if (!bedrag || bedrag <= 0) {
-        alert("Vul een geldig bedrag in");
-        return;
-      }
-
-      // unieke paymentId per betaling
-      const paymentId = crypto.randomUUID();
-
-      // status reset (open)
-      document.getElementById("statusTekst").innerText =
-        "Wachten op betaling...";
-
-      // QR leegmaken
-      const qrDiv = document.getElementById("qrcode");
-      qrDiv.innerHTML = "";
-
-      // betaal-URL maken
-      const betaalUrl =
-        baseUrl +
-        "/betaal.html?bedrag=" +
-        encodeURIComponent(bedrag) +
-        "&paymentId=" +
-        encodeURIComponent(paymentId);
-
-      // QR genereren
-      new QRCode(qrDiv, {
-        text: betaalUrl,
-        width: 200,
-        height: 200
-      });
-
-      // status polling (wordt in 3.2B echt gekoppeld)
-      setInterval(async () => {
-        const response = await fetch(
-          "/.netlify/functions/status-get?paymentId=" + paymentId
-        );
-        const data = await response.json();
-
-        if (data.status === "paid") {
-          document.getElementById("statusTekst").innerText = "Betaald";
-        }
-      }, 1500);
+    // Pay.nl paylink aanvragen via Netlify function
+    const resp = await fetch(`${baseUrl}/.netlify/functions/create-paylink`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ amount: bedrag })
     });
-  </script>
 
-</body>
-</html>
+    const data = await resp.json();
+
+    if (!resp.ok || !data.checkoutUrl || !data.reference) {
+      alert("Fout bij aanmaken Pay.nl betaling");
+      console.error(data);
+      return;
+    }
+
+    currentReference = data.reference;
+
+    // QR leegmaken en opnieuw tekenen
+    const qrDiv = document.getElementById("qrcode");
+    qrDiv.innerHTML = "";
+
+    new QRCode(qrDiv, {
+      text: data.checkoutUrl,
+      width: 220,
+      height: 220,
+      correctLevel: QRCode.CorrectLevel.H
+    });
+
+    // Start status polling
+    startPolling();
+  });
+
+  function startPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+    }
+
+    pollTimer = setInterval(async () => {
+      if (!currentReference) return;
+
+      const resp = await fetch(
+        `${baseUrl}/.netlify/functions/status?reference=${encodeURIComponent(currentReference)}`
+      );
+      const data = await resp.json();
+
+      if (data.status === "PAID") {
+        document.getElementById("bedragTekst").innerText = "Betaald";
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    }, 2000);
+  }
+</script>
