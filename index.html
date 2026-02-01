@@ -1,103 +1,148 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="nl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>EazyPay Kassa</title>
+
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; margin-top: 60px; }
-    input, button { width: 420px; max-width: 90%; padding: 14px; font-size: 18px; margin: 8px 0; }
-    #qrcode { margin-top: 18px; display: inline-block; }
-    #debugBox { width: 520px; max-width: 92%; margin: 18px auto; text-align: left; font-size: 12px; padding: 10px; background: #f2f2f2; border-radius: 8px; white-space: pre-wrap; }
+    body { font-family: Arial, sans-serif; background:#fff; margin:0; padding:0; }
+    .wrap { max-width: 520px; margin: 60px auto; text-align:center; padding: 0 16px; }
+    h1 { font-size: 42px; margin-bottom: 24px; }
+    input { width: 80%; max-width: 420px; padding: 14px; font-size: 18px; margin: 10px 0; }
+    button { width: 80%; max-width: 420px; padding: 14px; font-size: 18px; cursor:pointer; }
+    #bedragTekst { margin-top: 18px; font-size: 22px; font-weight: 700; }
+    #qrcode { margin: 18px auto 0; width: 220px; height: 220px; }
+    #statusTekst { margin-top: 12px; font-size: 18px; }
+    #debugBox { margin: 18px auto 0; text-align:left; background:#f3f3f3; padding: 12px; border-radius: 6px; width: 80%; max-width: 420px; white-space: pre-wrap; font-size: 12px; display:none; }
+    .row { display:flex; justify-content:center; gap:10px; margin-top:10px; }
+    .smallbtn { width: auto; padding: 10px 12px; font-size: 14px; }
   </style>
-</head>
-<body>
-
-  <h1>EazyPay Kassa</h1>
-
-  <input id="bedrag" type="number" step="0.01" placeholder="Bedrag in euro, bv 11.00" />
-  <input id="ref" type="text" placeholder="Referentie / factuurnummer / naam (optioneel)" />
-  <input id="omschrijving" type="text" placeholder="Omschrijving (optioneel)" />
-
-  <button id="toonQR">Toon QR</button>
-
-  <div id="bedragTekst" style="margin-top: 10px; font-size: 18px;"></div>
-  <div id="qrcode"></div>
-
-  <div id="debugBox">Debug:\n-</div>
 
   <!-- QRCode library -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>EazyPay Kassa</h1>
+
+    <input id="bedrag" type="number" min="0.01" step="0.01" placeholder="Bedrag (bijv. 12.50)" />
+    <input id="omschrijving" type="text" maxlength="60" placeholder="Omschrijving (naam, factuurnr, etc.)" />
+
+    <button id="toonQR">Toon QR</button>
+
+    <div id="bedragTekst"></div>
+    <div id="qrcode"></div>
+    <div id="statusTekst"></div>
+
+    <div class="row">
+      <button class="smallbtn" id="toggleDebug">Debug tonen/verbergen</button>
+      <button class="smallbtn" id="reset">Reset</button>
+    </div>
+
+    <div id="debugBox"></div>
+  </div>
 
   <script>
+    // Netlify base URL (jouw site)
     const baseUrl = "https://profound-bunny-c7b7b3.netlify.app";
 
     let currentReference = null;
     let pollTimer = null;
 
-    const debugBox = document.getElementById("debugBox");
-    const setDebug = (msg) => { debugBox.textContent = "Debug:\n" + msg; };
+    const elBedrag = document.getElementById("bedrag");
+    const elOms = document.getElementById("omschrijving");
+    const elBedragTekst = document.getElementById("bedragTekst");
+    const elQr = document.getElementById("qrcode");
+    const elStatus = document.getElementById("statusTekst");
+    const elDebug = document.getElementById("debugBox");
+
+    function debug(msg) {
+      elDebug.textContent += msg + "\n";
+    }
+
+    function resetUI() {
+      currentReference = null;
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+
+      elBedragTekst.textContent = "";
+      elStatus.textContent = "";
+      elQr.innerHTML = "";
+      elDebug.textContent = "";
+    }
+
+    document.getElementById("toggleDebug").addEventListener("click", () => {
+      elDebug.style.display = (elDebug.style.display === "none" ? "block" : "none");
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+      resetUI();
+      elBedrag.value = "";
+      elOms.value = "";
+    });
 
     document.getElementById("toonQR").addEventListener("click", async () => {
+      resetUI();
+
+      const bedrag = Number(elBedrag.value);
+      const omschrijving = (elOms.value || "").trim();
+
+      if (!bedrag || bedrag <= 0) {
+        alert("Vul een geldig bedrag in");
+        return;
+      }
+
+      elBedragTekst.textContent = "Te betalen: €" + bedrag.toFixed(2);
+      elStatus.textContent = "Betaling wordt aangemaakt...";
+
       try {
-        const bedrag = Number(document.getElementById("bedrag").value);
-        const ref = document.getElementById("ref").value.trim();
-        const omschrijving = document.getElementById("omschrijving").value.trim();
-
-        if (!bedrag || bedrag <= 0) {
-          alert("Vul een geldig bedrag in");
-          return;
-        }
-
-        document.getElementById("bedragTekst").innerText = "Te betalen: €" + bedrag.toFixed(2);
-        setDebug("Aanvraag betaling...");
-
         const resp = await fetch(`${baseUrl}/.netlify/functions/create-paylink`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             amount: bedrag,
-            customerReference: ref,
             description: omschrijving
           })
         });
 
         const data = await resp.json().catch(() => ({}));
 
+        debug("create-paylink HTTP: " + resp.status);
+        debug("create-paylink response: " + JSON.stringify(data, null, 2));
+
         if (!resp.ok) {
-          alert("Fout bij aanmaken betaling:\n\n" + JSON.stringify(data, null, 2));
-          setDebug("Fout response:\n" + JSON.stringify(data, null, 2));
+          alert("Fout bij aanmaken betaling:\n\n" + (data.error || JSON.stringify(data)));
+          elStatus.textContent = "Fout bij aanmaken betaling";
           return;
         }
 
         if (!data.checkoutUrl || !data.reference) {
-          alert("Pay.nl gaf geen checkoutUrl/reference terug");
-          setDebug("Onverwachte response:\n" + JSON.stringify(data, null, 2));
+          alert("Fout bij aanmaken betaling (geen checkoutUrl of reference)");
+          elStatus.textContent = "Fout bij aanmaken betaling";
           return;
         }
 
         currentReference = data.reference;
 
-        const qrDiv = document.getElementById("qrcode");
-        qrDiv.innerHTML = "";
-        new QRCode(qrDiv, {
+        // QR tekenen
+        elQr.innerHTML = "";
+        new QRCode(elQr, {
           text: data.checkoutUrl,
           width: 220,
           height: 220,
           correctLevel: QRCode.CorrectLevel.H
         });
 
-        setDebug(
-          "QR gemaakt.\n" +
-          "reference: " + currentReference + "\n" +
-          "checkoutUrl: " + data.checkoutUrl + "\n" +
-          "Polling status elke 2 sec..."
-        );
-
+        elStatus.textContent = "Wachten op betaling...";
         startPolling();
-      } catch (e) {
-        alert("Netwerkfout / scriptfout:\n" + (e?.message || e));
-        setDebug("Exception:\n" + (e?.stack || e?.message || e));
+
+      } catch (err) {
+        console.error(err);
+        alert("Netwerkfout bij create-paylink");
+        elStatus.textContent = "Netwerkfout bij create-paylink";
+        debug("ERROR: " + String(err));
       }
     });
 
@@ -107,15 +152,28 @@
       pollTimer = setInterval(async () => {
         if (!currentReference) return;
 
-        const resp = await fetch(`${baseUrl}/.netlify/functions/status?reference=${encodeURIComponent(currentReference)}`);
-        const data = await resp.json().catch(() => ({}));
+        try {
+          const resp = await fetch(`${baseUrl}/.netlify/functions/status?reference=${encodeURIComponent(currentReference)}`);
+          const data = await resp.json().catch(() => ({}));
 
-        // status.js geeft nu UNKNOWN, totdat we exchange.js echt status laat opslaan/teruggeven
-        if (data.status === "PAID") {
-          document.getElementById("bedragTekst").innerText = "Betaald";
-          setDebug("Betaald!\nreference: " + currentReference);
-          clearInterval(pollTimer);
-          pollTimer = null;
+          debug("status HTTP: " + resp.status);
+          debug("status response: " + JSON.stringify(data, null, 2));
+
+          if (!resp.ok) return;
+
+          if (data.status === "PAID") {
+            elStatus.textContent = "Betaald";
+            clearInterval(pollTimer);
+            pollTimer = null;
+          } else if (data.status === "FAILED") {
+            elStatus.textContent = "Mislukt";
+            clearInterval(pollTimer);
+            pollTimer = null;
+          } else {
+            elStatus.textContent = "Wachten op betaling...";
+          }
+        } catch (err) {
+          debug("Polling error: " + String(err));
         }
       }, 2000);
     }
