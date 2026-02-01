@@ -1,148 +1,83 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="nl">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>EazyPay Kassa</title>
-
   <style>
-    body { font-family: Arial, sans-serif; background:#fff; margin:0; padding:0; }
-    .wrap { max-width: 520px; margin: 60px auto; text-align:center; padding: 0 16px; }
-    h1 { font-size: 42px; margin-bottom: 24px; }
-    input { width: 80%; max-width: 420px; padding: 14px; font-size: 18px; margin: 10px 0; }
-    button { width: 80%; max-width: 420px; padding: 14px; font-size: 18px; cursor:pointer; }
-    #bedragTekst { margin-top: 18px; font-size: 22px; font-weight: 700; }
-    #qrcode { margin: 18px auto 0; width: 220px; height: 220px; }
-    #statusTekst { margin-top: 12px; font-size: 18px; }
-    #debugBox { margin: 18px auto 0; text-align:left; background:#f3f3f3; padding: 12px; border-radius: 6px; width: 80%; max-width: 420px; white-space: pre-wrap; font-size: 12px; display:none; }
-    .row { display:flex; justify-content:center; gap:10px; margin-top:10px; }
-    .smallbtn { width: auto; padding: 10px 12px; font-size: 14px; }
+    body { font-family: Arial, sans-serif; background:#fff; margin:0; }
+    .wrap { max-width: 520px; margin: 60px auto; padding: 0 16px; text-align:center; }
+    h1 { font-size: 34px; margin: 0 0 26px; font-weight: 700; }
+    input, button { width: 100%; max-width: 420px; box-sizing: border-box; }
+    input { padding: 14px 12px; font-size: 16px; margin: 10px 0; }
+    button { padding: 14px 12px; font-size: 16px; margin: 10px 0; cursor:pointer; }
+    #bedragTekst { font-size: 20px; margin: 18px 0 14px; font-weight: 700; }
+    #statusTekst { font-size: 16px; margin: 10px 0 0; }
+    #qrcode { display:flex; justify-content:center; margin-top: 18px; }
   </style>
-
-  <!-- QRCode library -->
-  <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
 </head>
-
 <body>
   <div class="wrap">
     <h1>EazyPay Kassa</h1>
 
-    <input id="bedrag" type="number" min="0.01" step="0.01" placeholder="Bedrag (bijv. 12.50)" />
-    <input id="omschrijving" type="text" maxlength="60" placeholder="Omschrijving (naam, factuurnr, etc.)" />
+    <input id="bedrag" type="number" step="0.01" placeholder="Bedrag in EUR" />
+    <input id="memo" type="text" placeholder="Omschrijving, naam of factuurnummer (optioneel)" />
 
     <button id="toonQR">Toon QR</button>
 
     <div id="bedragTekst"></div>
     <div id="qrcode"></div>
     <div id="statusTekst"></div>
-
-    <div class="row">
-      <button class="smallbtn" id="toggleDebug">Debug tonen/verbergen</button>
-      <button class="smallbtn" id="reset">Reset</button>
-    </div>
-
-    <div id="debugBox"></div>
   </div>
 
-  <script>
-    // Netlify base URL (jouw site)
-    const baseUrl = "https://profound-bunny-c7b7b3.netlify.app";
+  <!-- QRCode library -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
 
-    let currentReference = null;
+  <script>
+    let currentOrderId = null;
     let pollTimer = null;
 
-    const elBedrag = document.getElementById("bedrag");
-    const elOms = document.getElementById("omschrijving");
-    const elBedragTekst = document.getElementById("bedragTekst");
-    const elQr = document.getElementById("qrcode");
-    const elStatus = document.getElementById("statusTekst");
-    const elDebug = document.getElementById("debugBox");
-
-    function debug(msg) {
-      elDebug.textContent += msg + "\n";
-    }
-
-    function resetUI() {
-      currentReference = null;
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = null;
-
-      elBedragTekst.textContent = "";
-      elStatus.textContent = "";
-      elQr.innerHTML = "";
-      elDebug.textContent = "";
-    }
-
-    document.getElementById("toggleDebug").addEventListener("click", () => {
-      elDebug.style.display = (elDebug.style.display === "none" ? "block" : "none");
-    });
-
-    document.getElementById("reset").addEventListener("click", () => {
-      resetUI();
-      elBedrag.value = "";
-      elOms.value = "";
-    });
-
     document.getElementById("toonQR").addEventListener("click", async () => {
-      resetUI();
-
-      const bedrag = Number(elBedrag.value);
-      const omschrijving = (elOms.value || "").trim();
-
-      if (!bedrag || bedrag <= 0) {
-        alert("Vul een geldig bedrag in");
-        return;
-      }
-
-      elBedragTekst.textContent = "Te betalen: €" + bedrag.toFixed(2);
-      elStatus.textContent = "Betaling wordt aangemaakt...";
-
       try {
-        const resp = await fetch(`${baseUrl}/.netlify/functions/create-paylink`, {
+        const bedrag = Number(document.getElementById("bedrag").value);
+        const memo = String(document.getElementById("memo").value || "").trim();
+
+        if (!bedrag || bedrag <= 0) {
+          alert("Vul een geldig bedrag in");
+          return;
+        }
+
+        document.getElementById("bedragTekst").innerText = "Te betalen: €" + bedrag.toFixed(2);
+        document.getElementById("statusTekst").innerText = "";
+        document.getElementById("qrcode").innerHTML = "";
+
+        // Zelfde origin gebruiken, geen baseUrl nodig
+        const resp = await fetch("/.netlify/functions/create-paylink", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            amount: bedrag,
-            description: omschrijving
-          })
+          body: JSON.stringify({ amount: bedrag, memo })
         });
 
         const data = await resp.json().catch(() => ({}));
 
-        debug("create-paylink HTTP: " + resp.status);
-        debug("create-paylink response: " + JSON.stringify(data, null, 2));
-
-        if (!resp.ok) {
-          alert("Fout bij aanmaken betaling:\n\n" + (data.error || JSON.stringify(data)));
-          elStatus.textContent = "Fout bij aanmaken betaling";
+        if (!resp.ok || !data.checkoutUrl || !data.orderId) {
+          alert("Fout bij aanmaken betaling:\n\n" + JSON.stringify(data, null, 2));
           return;
         }
 
-        if (!data.checkoutUrl || !data.reference) {
-          alert("Fout bij aanmaken betaling (geen checkoutUrl of reference)");
-          elStatus.textContent = "Fout bij aanmaken betaling";
-          return;
-        }
+        currentOrderId = data.orderId;
 
-        currentReference = data.reference;
-
-        // QR tekenen
-        elQr.innerHTML = "";
-        new QRCode(elQr, {
+        new QRCode(document.getElementById("qrcode"), {
           text: data.checkoutUrl,
           width: 220,
           height: 220,
           correctLevel: QRCode.CorrectLevel.H
         });
 
-        elStatus.textContent = "Wachten op betaling...";
+        document.getElementById("statusTekst").innerText = "Wachten op betaling...";
         startPolling();
-
-      } catch (err) {
-        console.error(err);
-        alert("Netwerkfout bij create-paylink");
-        elStatus.textContent = "Netwerkfout bij create-paylink";
-        debug("ERROR: " + String(err));
+      } catch (e) {
+        alert("Onverwachte fout:\n\n" + (e?.message || e));
       }
     });
 
@@ -150,30 +85,22 @@
       if (pollTimer) clearInterval(pollTimer);
 
       pollTimer = setInterval(async () => {
-        if (!currentReference) return;
+        if (!currentOrderId) return;
 
-        try {
-          const resp = await fetch(`${baseUrl}/.netlify/functions/status?reference=${encodeURIComponent(currentReference)}`);
-          const data = await resp.json().catch(() => ({}));
+        const resp = await fetch("/.netlify/functions/status?orderId=" + encodeURIComponent(currentOrderId));
+        const data = await resp.json().catch(() => ({}));
 
-          debug("status HTTP: " + resp.status);
-          debug("status response: " + JSON.stringify(data, null, 2));
+        if (!resp.ok) {
+          document.getElementById("statusTekst").innerText = "Status fout: " + (data.error || "onbekend");
+          return;
+        }
 
-          if (!resp.ok) return;
-
-          if (data.status === "PAID") {
-            elStatus.textContent = "Betaald";
-            clearInterval(pollTimer);
-            pollTimer = null;
-          } else if (data.status === "FAILED") {
-            elStatus.textContent = "Mislukt";
-            clearInterval(pollTimer);
-            pollTimer = null;
-          } else {
-            elStatus.textContent = "Wachten op betaling...";
-          }
-        } catch (err) {
-          debug("Polling error: " + String(err));
+        if (data.status === "PAID") {
+          document.getElementById("statusTekst").innerText = "Betaald";
+          clearInterval(pollTimer);
+          pollTimer = null;
+        } else if (data.status && data.status !== "UNKNOWN") {
+          document.getElementById("statusTekst").innerText = "Status: " + data.status;
         }
       }, 2000);
     }
