@@ -2,21 +2,25 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
-  <title>QR Betalen</title>
+  <title>QR Betalen – Kassa</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 
 <body>
 
-  <h1>QR Betalen – Kassa</h1>
+  <h1>QR Betalen</h1>
 
-  <input id="bedrag" type="number" placeholder="Bedrag in euro">
+  <input
+    id="bedrag"
+    type="number"
+    placeholder="Bedrag in euro"
+  >
 
   <br><br>
 
   <button id="toonQR">Toon QR</button>
 
-  <p id="bedragTekst"></p>
+  <p id="statusTekst"></p>
 
   <div id="qrcode"></div>
 
@@ -24,9 +28,10 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
 
   <script>
-    const baseUrl = "https://singular-basbousa-adb0df.netlify.app/";
+    // 🔴 VERVANG DIT DOOR JOUW ECHTE NETLIFY URL
+    const baseUrl = "https://profound-bunny-c7b7b3.netlify.app/";
 
-    document.getElementById("toonQR").addEventListener("click", function () {
+    document.getElementById("toonQR").addEventListener("click", async function () {
       const bedrag = document.getElementById("bedrag").value;
 
       if (!bedrag || bedrag <= 0) {
@@ -34,17 +39,43 @@
         return;
       }
 
-      document.getElementById("bedragTekst").innerText =
-        "Te betalen: €" + bedrag;
+      // unieke paymentId per betaling
+      const paymentId = crypto.randomUUID();
 
+      // status reset (open)
+      document.getElementById("statusTekst").innerText =
+        "Wachten op betaling...";
+
+      // QR leegmaken
       const qrDiv = document.getElementById("qrcode");
       qrDiv.innerHTML = "";
 
+      // betaal-URL maken
+      const betaalUrl =
+        baseUrl +
+        "/betaal.html?bedrag=" +
+        encodeURIComponent(bedrag) +
+        "&paymentId=" +
+        encodeURIComponent(paymentId);
+
+      // QR genereren
       new QRCode(qrDiv, {
-        text: baseUrl + "/betaal.html?bedrag=" + bedrag,
+        text: betaalUrl,
         width: 200,
         height: 200
       });
+
+      // status polling (wordt in 3.2B echt gekoppeld)
+      setInterval(async () => {
+        const response = await fetch(
+          "/.netlify/functions/status-get?paymentId=" + paymentId
+        );
+        const data = await response.json();
+
+        if (data.status === "paid") {
+          document.getElementById("statusTekst").innerText = "Betaald";
+        }
+      }, 1500);
     });
   </script>
 
