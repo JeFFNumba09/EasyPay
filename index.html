@@ -5,129 +5,129 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>EazyPay Kassa</title>
 
-   <style>
-    body { font-family: Arial, sans-serif; background:#f5f5f5; margin:0; padding:24px; }
-    .card { max-width:520px; margin:0 auto; background:#fff; border:1px solid #ddd; border-radius:12px; padding:20px; }
-    label { display:block; margin:12px 0 6px; }
-    input { width:100%; padding:10px; border:1px solid #ccc; border-radius:8px; }
-    button { width:100%; padding:12px; border:0; border-radius:10px; background:#111; color:#fff; cursor:pointer; margin-top:14px; }
+  <style>
+    body { font-family: Arial, sans-serif; background:#111; color:#fff; margin:0; padding:30px; }
+    .card { max-width:520px; margin:0 auto; background:#1b1b1b; border:1px solid #2a2a2a; border-radius:12px; padding:20px; }
+    label { display:block; margin:12px 0 6px; font-size:14px; opacity:.9; }
+    input { width:100%; padding:12px; border-radius:10px; border:1px solid #333; background:#0f0f0f; color:#fff; box-sizing:border-box; }
+    button { width:100%; padding:12px; border-radius:10px; border:0; cursor:pointer; background:#2d6cdf; color:#fff; font-size:16px; margin-top:14px; }
     button:disabled { opacity:.6; cursor:not-allowed; }
     .row { margin-top:14px; }
-    #qr { display:flex; justify-content:center; margin-top:16px; }
-    .muted { color:#666; font-size:14px; margin-top:8px; }
-    .amountline { margin-top:10px; font-weight:bold; }
+    .muted { opacity:.8; font-size:14px; }
+    #qrcode { background:#fff; padding:14px; display:inline-block; border-radius:10px; }
+    .center { text-align:center; }
+    .error { background:#3a1111; border:1px solid #6b2222; padding:12px; border-radius:10px; margin-top:12px; white-space:pre-wrap; }
   </style>
+
+  <!-- QRCode library (lost "QRCode is not defined" op) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 
 <body>
   <div class="card">
     <h2>EazyPay Kassa</h2>
+    <p class="muted">Vul bedrag in, optioneel een referentie (naam, factuurnummer). Daarna krijg je een QR.</p>
 
-    <label>Bedrag in euro (bijv. 1.00)</label>
-    <input id="amount" value="1.00" inputmode="decimal" />
+    <label>Bedrag (EUR)</label>
+    <input id="amount" type="text" value="1.00" placeholder="Bijv. 1.00" />
 
     <label>Omschrijving / referentie (optioneel)</label>
-    <input id="desc" value="test" />
+    <input id="reference" type="text" placeholder="Bijv. Factuur 2026-001 of Naam" />
 
     <button id="btn">Toon QR</button>
 
-    <div class="amountline" id="amountline">Te betalen: €1.00</div>
-    <div class="muted" id="status"></div>
+    <div class="row center">
+      <div class="muted" id="payText">Te betalen: €1.00</div>
+    </div>
 
-    <div id="qr"></div>
+    <div class="row center" id="qrWrap" style="display:none;">
+      <div id="qrcode"></div>
+      <div class="muted" style="margin-top:10px;">Scan de QR om te betalen.</div>
+    </div>
+
+    <div class="row" id="errWrap" style="display:none;">
+      <div class="error" id="errBox"></div>
+    </div>
   </div>
 
   <script>
-    const btn = document.getElementById("btn");
     const amountEl = document.getElementById("amount");
-    const descEl = document.getElementById("desc");
-    const qrEl = document.getElementById("qr");
-    const statusEl = document.getElementById("status");
-    const amountLineEl = document.getElementById("amountline");
+    const refEl = document.getElementById("reference");
+    const btn = document.getElementById("btn");
+    const payText = document.getElementById("payText");
+    const qrWrap = document.getElementById("qrWrap");
+    const errWrap = document.getElementById("errWrap");
+    const errBox = document.getElementById("errBox");
+    const qrEl = document.getElementById("qrcode");
 
-    function setStatus(msg) {
-      statusEl.textContent = msg || "";
+    function setError(msg) {
+      errWrap.style.display = "block";
+      errBox.textContent = msg;
     }
 
-    function eurosToNumber(str) {
-      // accepteert "1,00" en "1.00"
-      const normalized = String(str).replace(",", ".").trim();
-      const n = Number(normalized);
-      return n;
+    function clearError() {
+      errWrap.style.display = "none";
+      errBox.textContent = "";
     }
 
-    amountEl.addEventListener("input", () => {
-      const eur = eurosToNumber(amountEl.value);
-      if (Number.isFinite(eur)) {
-        amountLineEl.textContent = `Te betalen: €${eur.toFixed(2)}`;
-      }
-    });
+    function updatePayText() {
+      const val = String(amountEl.value || "").trim();
+      payText.textContent = "Te betalen: €" + (val || "0.00");
+    }
 
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
+    amountEl.addEventListener("input", updatePayText);
+    updatePayText();
+
+    async function createPayment() {
+      clearError();
+      qrWrap.style.display = "none";
       qrEl.innerHTML = "";
-      setStatus("");
+
+      const amount = String(amountEl.value || "").trim();
+      const reference = String(refEl.value || "").trim();
+
+      btn.disabled = true;
+      btn.textContent = "Bezig...";
 
       try {
-        const eur = eurosToNumber(amountEl.value);
-        if (!Number.isFinite(eur) || eur <= 0) {
-          alert("Vul een geldig bedrag in.");
-          return;
-        }
-
-        const payload = {
-          amountEUR: eur,                  // server zet om naar centen
-          description: descEl.value || "",
-          reference: descEl.value || "",
-        };
-
-        const res = await fetch("/.netlify/functions/create-paylink", {
+        const resp = await fetch("/.netlify/functions/create-paylink", {
           method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amount, reference })
         });
 
-        const data = await res.json().catch(() => ({}));
+        const text = await resp.text();
+        let json;
+        try { json = JSON.parse(text); } catch { json = { raw: text }; }
 
-        if (!res.ok) {
-          alert("Fout bij aanmaken betaling:\n\n" + JSON.stringify(data, null, 2));
+        if (!resp.ok) {
+          setError("Fout bij aanmaken betaling:\n\n" + JSON.stringify(json, null, 2));
           return;
         }
 
-        const { checkoutUrl, orderId } = data;
+        const paymentUrl = json.paymentUrl;
+        if (!paymentUrl) {
+          setError("Geen paymentUrl teruggekregen:\n\n" + JSON.stringify(json, null, 2));
+          return;
+        }
 
-        setStatus("Paylink aangemaakt. QR wordt geladen.");
+        // QR genereren in de browser
+        new QRCode(qrEl, {
+          text: paymentUrl,
+          width: 260,
+          height: 260
+        });
 
-        // QR code van checkoutUrl genereren
-       // QR server-side ophalen als PNG
-qrEl.innerHTML = ""; // leegmaken
-const img = document.createElement("img");
-img.alt = "QR";
-img.style.width = "260px";
-img.style.height = "260px";
-img.src = `/.netlify/functions/qr?text=${encodeURIComponent(checkoutUrl)}`;
-qrEl.appendChild(img);
-
-
-        qrEl.innerHTML = "";
-const img = document.createElement("img");
-img.alt = "QR";
-img.style.width = "260px";
-img.style.height = "260px";
-img.src = `/.netlify/functions/qr?text=${encodeURIComponent(checkoutUrl)}`;
-qrEl.appendChild(img);
-
-
-        setStatus(`Order ID: ${orderId}`);
+        qrWrap.style.display = "block";
       } catch (e) {
-        alert("Fout bij aanmaken betaling:\n\n" + String(e));
+        setError("Fout bij aanmaken betaling:\n\n" + (e?.message || String(e)));
       } finally {
         btn.disabled = false;
+        btn.textContent = "Toon QR";
       }
-    });
+    }
+
+    btn.addEventListener("click", createPayment);
   </script>
 </body>
 </html>
-
-
-
