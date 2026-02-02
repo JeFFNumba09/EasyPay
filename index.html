@@ -104,20 +104,9 @@
           return;
         }
 
-        const paymentUrl =
-          json.paymentUrl ||
-          json.url ||
-          json.payment_url ||
-          json.paymentLink ||
-          (json.data && (json.data.paymentUrl || json.data.url));
-
+        const paymentUrl = json.paymentUrl;
         if (!paymentUrl) {
-          setError("Geen geldige paymentUrl ontvangen.\n\nResponse:\n" + JSON.stringify(json, null, 2));
-          return;
-        }
-
-        if (typeof QRCode === "undefined") {
-          setError("QRCode library niet geladen.");
+          setError("Geen geldige paymentUrl ontvangen:\n\n" + JSON.stringify(json, null, 2));
           return;
         }
 
