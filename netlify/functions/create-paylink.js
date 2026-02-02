@@ -7,65 +7,54 @@ export async function handler(event) {
     }
 
     const body = safeJson(event.body);
-    const amount = String(body.amount || "").trim();       // "1.00"
+    const amountEur = String(body.amount || "").trim();
     const reference = String(body.reference || "").trim();
 
-    if (!amount) {
-      return json(400, { error: "amount is required" });
-    }
+    if (!amountEur) return json(400, { error: "amount is required" });
 
     const SERVICE_ID = process.env.PAYNL_SERVICE_ID;
-    const TOKEN =
-      process.env.PAYNL_API_TOKEN ||
-      process.env.PAYNL_SERVICE_SECRET ||
-      process.env.PAYNL_TOKEN;
+    const API_TOKEN = process.env.PAYNL_API_TOKEN; // <-- BELANGRIJK
 
-    if (!SERVICE_ID || !TOKEN) {
+    if (!SERVICE_ID || !API_TOKEN) {
       return json(500, {
         error: "Missing Pay.nl env vars",
-        required: ["PAYNL_SERVICE_ID", "PAYNL_API_TOKEN (of PAYNL_SERVICE_SECRET)"]
+        required: ["PAYNL_SERVICE_ID", "PAYNL_API_TOKEN"]
       });
     }
 
-    // Je Netlify base URL (die jij gebruikt)
     const SITE_URL = "https://profound-bunny-c7b7b3.netlify.app";
 
-    // Pay.nl vraagt om ipAddress en finishUrl
     const ipAddress =
       event.headers["x-nf-client-connection-ip"] ||
-      event.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-      event.headers["client-ip"] ||
+      (event.headers["x-forwarded-for"] || "").split(",")[0].trim() ||
       "127.0.0.1";
 
     const finishUrl = `${SITE_URL}/Klaar.html`;
     const exchangeUrl = `${SITE_URL}/.netlify/functions/status`;
 
-    // Pay.nl endpoint (zoals in je error)
-    const PAYNL_API_URL = "https://rest-api.pay.nl/v16/Transaction/start/json";
+    const amount = toCents(amountEur);
 
-    // Pay.nl verwacht vaak bedrag in centen (integer).
-    // Jij stuurt "1.00" vanuit de UI. Dit zetten we om naar centen.
-    const amountCents = toCents(amount);
+    const url = "https://rest-api.pay.nl/v16/Transaction/start/json";
 
     const payload = {
-      token: TOKEN,
+      token: API_TOKEN,
       serviceId: SERVICE_ID,
-
-      amount: amountCents,                 // centen
+      amount: amount,
       description: reference || "EazyPay betaling",
-
       ipAddress: ipAddress,
       finishUrl: finishUrl,
       exchangeUrl: exchangeUrl
     };
 
-    const r = await fetch(PAYNL_API_URL, {
+    const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
 
     const text = await r.text();
+    console.log("Pay.nl HTTP", r.status, "raw:", text);
+
     let data;
     try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
@@ -77,15 +66,12 @@ export async function handler(event) {
       });
     }
 
-    // Pay.nl geeft vaak redirect URL terug in request/result:
+    // Pay.nl geeft vaak een redirect URL terug
     const paymentUrl =
-      data.paymentUrl ||
-      data.url ||
-      data.payUrl ||
-      data.redirectUrl ||
       data?.request?.paymentUrl ||
       data?.request?.url ||
-      data?.request?.result ||
+      data?.paymentUrl ||
+      data?.url ||
       data?.result?.paymentUrl ||
       data?.result?.url;
 
@@ -105,10 +91,7 @@ export async function handler(event) {
 function json(statusCode, obj) {
   return {
     statusCode,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(obj)
   };
 }
@@ -118,7 +101,6 @@ function safeJson(str) {
 }
 
 function toCents(eurString) {
-  // "1.00" -> 100
   const s = String(eurString).replace(",", ".").trim();
   const n = Number(s);
   if (!Number.isFinite(n)) return 0;
