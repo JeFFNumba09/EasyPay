@@ -6,8 +6,6 @@
   <title>EazyPay Kassa</title>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-</head>
-
 
   <style>
     body { font-family: Arial, sans-serif; background:#111; color:#fff; margin:0; padding:30px; }
@@ -22,28 +20,18 @@
     .center { text-align:center; }
     .error { background:#3a1111; border:1px solid #6b2222; padding:12px; border-radius:10px; margin-top:12px; white-space:pre-wrap; }
   </style>
-
-  <!-- QRCode library (lost "QRCode is not defined" op) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-
-<script>
-document.addEventListener("DOMContentLoaded", () => {
-  console.log("DOM loaded, QRCode is", typeof QRCode);
-});
-</script>
-
 </head>
 
 <body>
   <div class="card">
     <h2>EazyPay Kassa</h2>
-    <p class="muted">Vul bedrag in, optioneel een referentie (naam, factuurnummer). Daarna krijg je een QR.</p>
+    <p class="muted">Vul bedrag in, optioneel een referentie. Daarna krijg je een QR.</p>
 
     <label>Bedrag (EUR)</label>
-    <input id="amount" type="text" value="1.00" placeholder="Bijv. 1.00" />
+    <input id="amount" type="text" value="1.00" />
 
-    <label>Omschrijving / referentie (optioneel)</label>
-    <input id="reference" type="text" placeholder="Bijv. Factuur 2026-001 of Naam" />
+    <label>Omschrijving / referentie</label>
+    <input id="reference" type="text" />
 
     <button id="btn">Toon QR</button>
 
@@ -94,9 +82,6 @@ document.addEventListener("DOMContentLoaded", () => {
       qrWrap.style.display = "none";
       qrEl.innerHTML = "";
 
-      const amount = String(amountEl.value || "").trim();
-      const reference = String(refEl.value || "").trim();
-
       btn.disabled = true;
       btn.textContent = "Bezig...";
 
@@ -104,34 +89,27 @@ document.addEventListener("DOMContentLoaded", () => {
         const resp = await fetch("/.netlify/functions/create-paylink", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ amount, reference })
+          body: JSON.stringify({
+            amount: amountEl.value,
+            reference: refEl.value
+          })
         });
 
-        const text = await resp.text();
-        let json;
-        try { json = JSON.parse(text); } catch { json = { raw: text }; }
+        const json = await resp.json();
 
-        if (!resp.ok) {
-          setError("Fout bij aanmaken betaling:\n\n" + JSON.stringify(json, null, 2));
-          return;
+        if (!resp.ok || !json.paymentUrl) {
+          throw new Error("Geen geldige paymentUrl ontvangen");
         }
 
-        const paymentUrl = json.paymentUrl;
-        if (!paymentUrl) {
-          setError("Geen paymentUrl teruggekregen:\n\n" + JSON.stringify(json, null, 2));
-          return;
-        }
-
-        // QR genereren in de browser
         new QRCode(qrEl, {
-          text: paymentUrl,
+          text: json.paymentUrl,
           width: 260,
           height: 260
         });
 
         qrWrap.style.display = "block";
       } catch (e) {
-        setError("Fout bij aanmaken betaling:\n\n" + (e?.message || String(e)));
+        setError("Fout bij aanmaken betaling:\n\n" + e.message);
       } finally {
         btn.disabled = false;
         btn.textContent = "Toon QR";
@@ -142,4 +120,3 @@ document.addEventListener("DOMContentLoaded", () => {
   </script>
 </body>
 </html>
-
