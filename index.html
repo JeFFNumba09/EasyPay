@@ -30,8 +30,8 @@
     <label>Bedrag (EUR)</label>
     <input id="amount" type="text" value="1.00" />
 
-    <label>Omschrijving / referentie</label>
-    <input id="reference" type="text" />
+    <label>Omschrijving / referentie (optioneel)</label>
+    <input id="reference" type="text" value="test" />
 
     <button id="btn">Toon QR</button>
 
@@ -82,6 +82,9 @@
       qrWrap.style.display = "none";
       qrEl.innerHTML = "";
 
+      const amount = String(amountEl.value || "").trim();
+      const reference = String(refEl.value || "").trim();
+
       btn.disabled = true;
       btn.textContent = "Bezig...";
 
@@ -89,27 +92,39 @@
         const resp = await fetch("/.netlify/functions/create-paylink", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            amount: amountEl.value,
-            reference: refEl.value
-          })
+          body: JSON.stringify({ amount, reference })
         });
 
-        const json = await resp.json();
+        const rawText = await resp.text();
+        let json;
+        try { json = JSON.parse(rawText); } catch { json = { raw: rawText }; }
 
-        if (!resp.ok || !json.paymentUrl) {
-          throw new Error("Geen geldige paymentUrl ontvangen");
+        if (!resp.ok) {
+          setError("Fout bij aanmaken betaling:\n\n" + JSON.stringify(json, null, 2));
+          return;
         }
 
-        new QRCode(qrEl, {
-          text: json.paymentUrl,
-          width: 260,
-          height: 260
-        });
+        const paymentUrl =
+          json.paymentUrl ||
+          json.url ||
+          json.payment_url ||
+          json.paymentLink ||
+          (json.data && (json.data.paymentUrl || json.data.url));
 
+        if (!paymentUrl) {
+          setError("Geen geldige paymentUrl ontvangen.\n\nResponse:\n" + JSON.stringify(json, null, 2));
+          return;
+        }
+
+        if (typeof QRCode === "undefined") {
+          setError("QRCode library niet geladen.");
+          return;
+        }
+
+        new QRCode(qrEl, { text: paymentUrl, width: 260, height: 260 });
         qrWrap.style.display = "block";
       } catch (e) {
-        setError("Fout bij aanmaken betaling:\n\n" + e.message);
+        setError("Fout bij aanmaken betaling:\n\n" + (e?.message || String(e)));
       } finally {
         btn.disabled = false;
         btn.textContent = "Toon QR";
