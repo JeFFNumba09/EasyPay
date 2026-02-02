@@ -1,39 +1,57 @@
-// netlify/functions/status.js
-
-function json(statusCode, data) {
-  return {
-    statusCode,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*"
-    },
-    body: JSON.stringify(data)
-  };
-}
-
-async function upstashGet(key) {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-
-  const resp = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-
-  const data = await resp.json();
-  return data?.result ?? null;
-}
+// /netlify/functions/status.js
 
 exports.handler = async (event) => {
   try {
-    const reference = event.queryStringParameters?.reference;
-    if (!reference) return json(400, { error: "Missing reference" });
+    const id = event.queryStringParameters?.id;
+    if (!id) {
+      return {
+        statusCode: 400,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ error: "Missing id" }),
+      };
+    }
 
-    const status = (await upstashGet(`pay:${reference}:status`)) || "UNKNOWN";
-    const orderId = await upstashGet(`pay:${reference}:orderId`);
+    const serviceId = process.env.PAYNL_SERVICE_ID;
+    const secret = process.env.PAYNL_SERVICE_SECRET;
 
-    return json(200, { reference, status, orderId });
-  } catch (err) {
-    return json(500, { error: "Server error", details: String(err?.message || err) });
+    if (!serviceId || !secret) {
+      return {
+        statusCode: 500,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ error: "Missing PAYNL_SERVICE_ID or PAYNL_SERVICE_SECRET" }),
+      };
+    }
+
+    const auth = Buffer.from(`${serviceId}:${secret}`).toString("base64");
+
+    // status endpoint komt uit links.status in response; hier is de vaste variant:
+    const url = `https://connect.pay.nl/v1/orders/${encodeURIComponent(id)}/status`;
+
+    const resp = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        authorization: `Basic ${auth}`,
+      },
+    });
+
+    const text = await resp.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+
+    return {
+      statusCode: resp.status,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(data),
+    };
+  } catch (e) {
+    return {
+      statusCode: 500,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ error: "Server error", details: String(e) }),
+    };
   }
 };
