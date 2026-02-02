@@ -109,7 +109,14 @@ img.src = `/.netlify/functions/qr?text=${encodeURIComponent(checkoutUrl)}`;
 qrEl.appendChild(img);
 
 
-        await QRCode.toCanvas(canvas, checkoutUrl, { width: 260 });
+        qrEl.innerHTML = "";
+const img = document.createElement("img");
+img.alt = "QR";
+img.style.width = "260px";
+img.style.height = "260px";
+img.src = `/.netlify/functions/qr?text=${encodeURIComponent(checkoutUrl)}`;
+qrEl.appendChild(img);
+
 
         setStatus(`Order ID: ${orderId}`);
       } catch (e) {
@@ -121,5 +128,6 @@ qrEl.appendChild(img);
   </script>
 </body>
 </html>
+
 
 
