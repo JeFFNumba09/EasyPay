@@ -21,6 +21,13 @@
 
   <!-- QRCode library (lost "QRCode is not defined" op) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  console.log("DOM loaded, QRCode is", typeof QRCode);
+});
+</script>
+
 </head>
 
 <body>
