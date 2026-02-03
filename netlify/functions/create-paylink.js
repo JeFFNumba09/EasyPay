@@ -1,4 +1,5 @@
-// netlify/functions/create-paylink.js  (CommonJS)
+// netlify/functions/create-paylink.js
+// CommonJS – geschikt voor Netlify Functions
 
 exports.handler = async (event) => {
   try {
@@ -7,69 +8,74 @@ exports.handler = async (event) => {
     }
 
     const body = safeJson(event.body);
-    const amountEur = String(body.amount || "").trim(); // bv "1.00"
+    const amountEur = String(body.amount || "").trim();      // bijv "10.00"
     const reference = String(body.reference || "").trim();
 
     if (!amountEur) {
       return json(400, { error: "amount is required" });
     }
 
-    // ENV VARS (Netlify)
-    const SERVICE_ID = process.env.PAYNL_SERVICE_ID; // bv SL-4630-7005
-    const API_TOKEN = process.env.PAYNL_API_TOKEN;   // lange token (bv d64be9f3...)
+    // ===== ENV VARS =====
+    const SERVICE_ID = process.env.PAYNL_SERVICE_ID;   // SL-xxxx-xxxx
+    const API_TOKEN  = process.env.PAYNL_API_TOKEN;    // lange token (geen AT-code)
 
     if (!SERVICE_ID || !API_TOKEN) {
       return json(500, {
-        error: "Missing Pay.nl env vars",
+        error: "Missing Pay.nl environment variables",
         required: ["PAYNL_SERVICE_ID", "PAYNL_API_TOKEN"]
       });
     }
 
+    // ===== SITE URL =====
     const SITE_URL = "https://profound-bunny-c7b7b3.netlify.app";
 
-    // Pay.nl wil ipAddress + finishUrl
+    // 👉 KLANT ziet dit na betalen (GEEN kassa)
+    const finishUrl  = `${SITE_URL}/klant-bedankt.html`;
+
+    // 👉 KASSA gebruikt dit alleen voor status checks
+    const exchangeUrl = `${SITE_URL}/.netlify/functions/status`;
+
+    // IP-adres (Pay.nl verplicht)
     const ipAddress =
       event.headers["x-nf-client-connection-ip"] ||
       (event.headers["x-forwarded-for"] || "").split(",")[0].trim() ||
       "127.0.0.1";
 
-    const finishUrl = `${SITE_URL}/Klaar.html`;
-    const exchangeUrl = `${SITE_URL}/.netlify/functions/status`;
-
-    // Pay.nl verwacht bedrag vaak in centen
+    // Bedrag omzetten naar centen
     const amountCents = toCents(amountEur);
 
+    // ===== PAY.NL ENDPOINT =====
     const PAYNL_API_URL = "https://rest-api.pay.nl/v16/Transaction/start/json";
 
     const payload = {
       token: API_TOKEN,
       serviceId: SERVICE_ID,
       amount: amountCents,
-      description: reference || "EazyPay betaling",
+      description: reference || "Betaling",
       ipAddress: ipAddress,
       finishUrl: finishUrl,
       exchangeUrl: exchangeUrl
     };
 
-    const r = await fetch(PAYNL_API_URL, {
+    const resp = await fetch(PAYNL_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
 
-    const text = await r.text();
+    const text = await resp.text();
     let data;
     try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
-    if (!r.ok || data?.status === "FALSE") {
+    if (!resp.ok || data?.status === "FALSE") {
       return json(502, {
         error: "Pay.nl API call failed",
-        httpStatus: r.status,
+        httpStatus: resp.status,
         response: data
       });
     }
 
-    // Pay.nl response: data.transaction.paymentURL
+    // ===== PAY.NL RESPONSE =====
     const paymentUrl =
       data?.transaction?.paymentURL ||
       data?.transaction?.paymentUrl ||
@@ -78,21 +84,28 @@ exports.handler = async (event) => {
 
     const transactionId =
       data?.transaction?.transactionId ||
-      data?.transactionId ||
+      data?.transaction?.transactionID ||
       null;
 
-    if (!paymentUrl) {
+    if (!paymentUrl || !transactionId) {
       return json(502, {
-        error: "No paymentUrl found in Pay.nl response",
+        error: "Missing paymentUrl or transactionId",
         response: data
       });
     }
 
-    return json(200, { paymentUrl, transactionId });
+    // 👉 KASSA krijgt ALLEEN wat nodig is
+    return json(200, {
+      paymentUrl,
+      transactionId
+    });
+
   } catch (err) {
-    return json(500, { error: err?.message || String(err) });
+    return json(500, { error: err.message || String(err) });
   }
 };
+
+// ===== HELPERS =====
 
 function json(statusCode, obj) {
   return {
