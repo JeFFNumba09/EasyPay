@@ -1,5 +1,4 @@
-// netlify/functions/create-paylink.js
-// CommonJS – geschikt voor Netlify Functions
+// netlify/functions/create-paylink.js  (CommonJS)
 
 exports.handler = async (event) => {
   try {
@@ -8,104 +7,90 @@ exports.handler = async (event) => {
     }
 
     const body = safeJson(event.body);
-    const amountEur = String(body.amount || "").trim();      // bijv "10.00"
-    const reference = String(body.reference || "").trim();
+    const amountEur = String(body.amount || "").trim();     // bijv "1.00"
+    const reference = String(body.reference || "").trim();  // optioneel
 
     if (!amountEur) {
       return json(400, { error: "amount is required" });
     }
 
-    // ===== ENV VARS =====
-    const SERVICE_ID = process.env.PAYNL_SERVICE_ID;   // SL-xxxx-xxxx
-    const API_TOKEN  = process.env.PAYNL_API_TOKEN;    // lange token (geen AT-code)
+    const SERVICE_ID = process.env.PAYNL_SERVICE_ID;
+    const API_TOKEN = process.env.PAYNL_API_TOKEN;
 
     if (!SERVICE_ID || !API_TOKEN) {
-      return json(500, {
-        error: "Missing Pay.nl environment variables",
-        required: ["PAYNL_SERVICE_ID", "PAYNL_API_TOKEN"]
-      });
+      return json(500, { error: "Missing PAYNL_SERVICE_ID or PAYNL_API_TOKEN in env vars" });
     }
 
-    // ===== SITE URL =====
-    const SITE_URL = "https://profound-bunny-c7b7b3.netlify.app";
-
-    // 👉 KLANT ziet dit na betalen (GEEN kassa)
-    const finishUrl  = `${SITE_URL}/klant-bedankt.html`;
-
-    // 👉 KASSA gebruikt dit alleen voor status checks
-    const exchangeUrl = `${SITE_URL}/.netlify/functions/status`;
-
-    // IP-adres (Pay.nl verplicht)
+    // IP adres (Pay.nl vraagt deze vaak)
     const ipAddress =
       event.headers["x-nf-client-connection-ip"] ||
-      (event.headers["x-forwarded-for"] || "").split(",")[0].trim() ||
+      event.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+      event.headers["client-ip"] ||
       "127.0.0.1";
 
-    // Bedrag omzetten naar centen
+    // Basis URL van je site (Netlify)
+    const siteUrl =
+      process.env.URL || "https://profound-bunny-c7b7b3.netlify.app";
+
+    // Dit is CRUCIAAL:
+    // klant moet na betalen uitkomen op klant-bedankt.html (in de ROOT van je site)
+    const finishUrl = `${siteUrl}/klant-bedankt.html`;
+
+    // Pay.nl Transaction/start
+    // Let op: Pay.nl verwacht bedrag vaak in CENTS
     const amountCents = toCents(amountEur);
+    if (!amountCents || amountCents < 1) {
+      return json(400, { error: "Invalid amount (must be >= 0.01)" });
+    }
 
-    // ===== PAY.NL ENDPOINT =====
-    const PAYNL_API_URL = "https://rest-api.pay.nl/v16/Transaction/start/json";
+    const description = reference ? `EazyPay: ${reference}` : "EazyPay betaling";
 
-    const payload = {
+    const endpoint = "https://rest-api.pay.nl/v14/Transaction/start/json";
+
+    const params = new URLSearchParams({
       token: API_TOKEN,
       serviceId: SERVICE_ID,
-      amount: amountCents,
-      description: reference || "Betaling",
+      amount: String(amountCents),
+      description: description,
       ipAddress: ipAddress,
-      finishUrl: finishUrl,
-      exchangeUrl: exchangeUrl
-    };
-
-    const resp = await fetch(PAYNL_API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      finishUrl: finishUrl
     });
 
-    const text = await resp.text();
-    let data;
-    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    const url = `${endpoint}?${params.toString()}`;
 
-    if (!resp.ok || data?.status === "FALSE") {
-      return json(502, {
+    const resp = await fetch(url, { method: "GET" });
+    const data = await resp.json().catch(() => ({}));
+
+    // Pay.nl response bevat meestal:
+    // data.request.result === 1 bij success
+    // data.transaction.paymentURL en data.transaction.transactionId
+    const result = Number(data?.request?.result || 0);
+
+    if (result !== 1) {
+      return json(400, {
         error: "Pay.nl API call failed",
-        httpStatus: resp.status,
         response: data
       });
     }
 
-    // ===== PAY.NL RESPONSE =====
-    const paymentUrl =
-      data?.transaction?.paymentURL ||
-      data?.transaction?.paymentUrl ||
-      data?.paymentURL ||
-      data?.paymentUrl;
-
-    const transactionId =
-      data?.transaction?.transactionId ||
-      data?.transaction?.transactionID ||
-      null;
+    const paymentUrl = data?.transaction?.paymentURL;
+    const transactionId = data?.transaction?.transactionId;
 
     if (!paymentUrl || !transactionId) {
-      return json(502, {
-        error: "Missing paymentUrl or transactionId",
+      return json(500, {
+        error: "No paymentUrl/transactionId found in Pay.nl response",
         response: data
       });
     }
 
-    // 👉 KASSA krijgt ALLEEN wat nodig is
-    return json(200, {
-      paymentUrl,
-      transactionId
-    });
-
+    // Dit moet matchen met jouw index.html:
+    return json(200, { paymentUrl, transactionId });
   } catch (err) {
-    return json(500, { error: err.message || String(err) });
+    return json(500, { error: err?.message || String(err) });
   }
 };
 
-// ===== HELPERS =====
+// ===== Helpers =====
 
 function json(statusCode, obj) {
   return {
@@ -119,7 +104,11 @@ function json(statusCode, obj) {
 }
 
 function safeJson(str) {
-  try { return JSON.parse(str || "{}"); } catch { return {}; }
+  try {
+    return JSON.parse(str || "{}");
+  } catch {
+    return {};
+  }
 }
 
 function toCents(eurString) {
