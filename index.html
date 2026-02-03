@@ -1,236 +1,77 @@
 <!doctype html>
 <html lang="nl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8">
   <title>EazyPay Kassa</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
   <style>
-    body { font-family: Arial, sans-serif; background:#111; color:#fff; margin:0; padding:30px; }
-    .card { max-width:520px; margin:0 auto; background:#1b1b1b; border:1px solid #2a2a2a; border-radius:12px; padding:20px; }
-    label { display:block; margin:12px 0 6px; font-size:14px; opacity:.9; }
-    input { width:100%; padding:12px; border-radius:10px; border:1px solid #333; background:#0f0f0f; color:#fff; box-sizing:border-box; }
-    button { width:100%; padding:12px; border-radius:10px; border:0; cursor:pointer; background:#2d6cdf; color:#fff; font-size:16px; margin-top:14px; }
-    button:disabled { opacity:.6; cursor:not-allowed; }
-    .row { margin-top:14px; }
-    .muted { opacity:.8; font-size:14px; }
-    #qrcode { background:#fff; padding:14px; display:inline-block; border-radius:10px; }
-    .center { text-align:center; }
-    .error { background:#3a1111; border:1px solid #6b2222; padding:12px; border-radius:10px; margin-top:12px; white-space:pre-wrap; }
-    .status { background:#151515; border:1px solid #2a2a2a; padding:12px; border-radius:10px; margin-top:12px; white-space:pre-wrap; }
+    body { font-family: Arial; background:#111; color:#fff; padding:30px }
+    .card { max-width:520px; margin:auto; background:#1b1b1b; padding:20px; border-radius:12px }
+    input, button { width:100%; padding:12px; margin-top:10px }
+    button { background:#2d6cdf; color:#fff; border:0; border-radius:8px }
+    #qrcode { background:#fff; padding:12px; display:inline-block }
+    .center { text-align:center }
   </style>
 </head>
 
 <body>
-  <div class="card">
-    <h2>EazyPay Kassa</h2>
-    <p class="muted">Vul bedrag in, optioneel een referentie. Daarna verschijnt een QR. Na betaling ga je automatisch naar “Betaald”.</p>
+<div class="card" id="kassa">
+  <h2>EazyPay Kassa</h2>
 
-    <!-- FORM -->
-    <div id="formWrap">
-      <label>Bedrag (EUR)</label>
-      <input id="amount" type="text" value="1.00" placeholder="Bijv. 1.00" />
+  <input id="amount" value="1.00" placeholder="Bedrag">
+  <input id="reference" placeholder="Omschrijving (optioneel)">
+  <button onclick="startPayment()">Toon QR</button>
 
-      <label>Omschrijving / referentie (optioneel)</label>
-      <input id="reference" type="text" placeholder="Bijv. Factuur 2026-001 of Naam" />
-
-      <button id="btn">Toon QR</button>
-
-      <div class="row center">
-        <div class="muted" id="payText">Te betalen: €1.00</div>
-      </div>
-    </div>
-
-    <!-- QR + STATUS -->
-    <div id="payWrap" style="display:none;">
-      <div class="row center" id="qrWrap">
-        <div id="qrcode"></div>
-        <div class="muted" style="margin-top:10px;">Scan de QR om te betalen.</div>
-      </div>
-
-      <div class="row">
-        <div class="status" id="statusBox">Wachten op betaling…</div>
-      </div>
-
-      <div class="row">
-        <button id="cancelBtn" style="background:#444;">Annuleer en nieuwe betaling</button>
-      </div>
-    </div>
-
-    <!-- ERROR -->
-    <div class="row" id="errWrap" style="display:none;">
-      <div class="error" id="errBox"></div>
-    </div>
+  <div class="center" id="qrWrap" style="display:none">
+    <div id="qrcode"></div>
+    <p>Scan om te betalen</p>
   </div>
+</div>
 
-  <script>
-    const amountEl = document.getElementById("amount");
-    const refEl = document.getElementById("reference");
-    const btn = document.getElementById("btn");
-    const payText = document.getElementById("payText");
+<script>
+let transactionId = null;
+let pollTimer = null;
 
-    const formWrap = document.getElementById("formWrap");
-    const payWrap = document.getElementById("payWrap");
-    const qrEl = document.getElementById("qrcode");
-    const statusBox = document.getElementById("statusBox");
-    const cancelBtn = document.getElementById("cancelBtn");
+async function startPayment() {
+  document.getElementById("qrcode").innerHTML = "";
+  document.getElementById("qrWrap").style.display = "none";
 
-    const errWrap = document.getElementById("errWrap");
-    const errBox = document.getElementById("errBox");
+  const amount = document.getElementById("amount").value;
+  const reference = document.getElementById("reference").value;
 
-    let transactionId = null;
-    let pollTimer = null;
+  const res = await fetch("/.netlify/functions/create-paylink", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ amount, reference })
+  });
 
-    function setError(msg) {
-      errWrap.style.display = "block";
-      errBox.textContent = msg;
+  const data = await res.json();
+  transactionId = data.transactionId;
+
+  new QRCode(document.getElementById("qrcode"), {
+    text: data.paymentUrl,
+    width: 260,
+    height: 260
+  });
+
+  document.getElementById("qrWrap").style.display = "block";
+  startPolling();
+}
+
+function startPolling() {
+  pollTimer = setInterval(async () => {
+    const res = await fetch("/.netlify/functions/status?id=" + transactionId);
+    const data = await res.json();
+
+    if (data.status === "PAID") {
+      clearInterval(pollTimer);
+      window.location.href = "/kassa-betaald.html";
     }
-
-    function clearError() {
-      errWrap.style.display = "none";
-      errBox.textContent = "";
-    }
-
-    function updatePayText() {
-      const val = String(amountEl.value || "").trim();
-      payText.textContent = "Te betalen: €" + (val || "0.00");
-    }
-
-    amountEl.addEventListener("input", updatePayText);
-    updatePayText();
-
-    function showPaymentScreen() {
-      formWrap.style.display = "none";
-      payWrap.style.display = "block";
-    }
-
-    function showFormScreen() {
-      formWrap.style.display = "block";
-      payWrap.style.display = "none";
-      qrEl.innerHTML = "";
-      statusBox.textContent = "";
-      transactionId = null;
-      sessionStorage.removeItem("transactionId");
-    }
-
-    function stopPolling() {
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = null;
-    }
-
-    async function createPayment() {
-      clearError();
-      stopPolling();
-
-      btn.disabled = true;
-      btn.textContent = "Bezig...";
-
-      try {
-        const amount = String(amountEl.value || "").trim();
-        const reference = String(refEl.value || "").trim();
-
-        const resp = await fetch("/.netlify/functions/create-paylink", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ amount, reference })
-        });
-
-        const data = await resp.json();
-
-        if (!resp.ok) {
-          throw new Error(JSON.stringify(data, null, 2));
-        }
-
-        if (!data.paymentUrl || !data.transactionId) {
-          throw new Error("Geen paymentUrl of transactionId ontvangen.");
-        }
-
-        transactionId = data.transactionId;
-        sessionStorage.setItem("transactionId", transactionId);
-
-        qrEl.innerHTML = "";
-        new QRCode(qrEl, { text: data.paymentUrl, width: 260, height: 260 });
-
-        statusBox.textContent = "Wachten op betaling…";
-        showPaymentScreen();
-        startPolling();
-
-      } catch (e) {
-        setError("Fout bij aanmaken betaling:\n\n" + (e?.message || String(e)));
-      } finally {
-        btn.disabled = false;
-        btn.textContent = "Toon QR";
-      }
-    }
-
-    function isPaid(paynlResponse) {
-      // Pay.nl kan verschillende vormen teruggeven, daarom checken we meerdere mogelijkheden.
-      const state = paynlResponse?.transaction?.state;
-      const statusName = paynlResponse?.transaction?.stateName || paynlResponse?.transaction?.statusName;
-
-      // Vaak is betaald state === 100
-      if (state === 100 || state === "100") return true;
-
-      // Soms komt er tekst terug (afhankelijk van endpoint/versie)
-      if (typeof statusName === "string" && statusName.toLowerCase().includes("paid")) return true;
-      if (typeof statusName === "string" && statusName.toLowerCase().includes("betaald")) return true;
-
-      return false;
-    }
-
-    function startPolling() {
-      stopPolling();
-
-      pollTimer = setInterval(async () => {
-        try {
-          if (!transactionId) return;
-
-          const resp = await fetch("/.netlify/functions/status?transactionId=" + encodeURIComponent(transactionId));
-          const data = await resp.json();
-
-          // Kleine status update in UI
-          const state = data?.transaction?.state;
-          statusBox.textContent = "Status: " + (state ?? "onbekend") + " (wachten op betaling…)";
-
-          if (isPaid(data)) {
-            stopPolling();
-
-            // QR verdwijnt direct
-            qrEl.innerHTML = "";
-            statusBox.textContent = "Betaling ontvangen. Doorsturen…";
-
-            sessionStorage.removeItem("transactionId");
-
-            // Door naar betaald scherm
-            window.location.href = "/Klaar.html";
-          }
-
-        } catch (e) {
-          console.error("Status check error:", e);
-        }
-      }, 3000);
-    }
-
-    // Annuleren knop
-    cancelBtn.addEventListener("click", () => {
-      stopPolling();
-      showFormScreen();
-    });
-
-    // Opnieuw laden: als er nog een transactie openstaat, blijf tonen i.p.v. formulier
-    window.addEventListener("load", () => {
-      const saved = sessionStorage.getItem("transactionId");
-      if (saved) {
-        transactionId = saved;
-        showPaymentScreen();
-        statusBox.textContent = "Wachten op betaling…";
-        startPolling();
-      }
-    });
-
-    btn.addEventListener("click", createPayment);
-  </script>
+  }, 3000);
+}
+</script>
 </body>
 </html>
