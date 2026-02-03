@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Betaald</title>
+  <style>
+    body { margin:0; font-family: Arial, sans-serif; background:#0f0f0f; color:#fff; display:flex; align-items:center; justify-content:center; min-height:100vh; }
+    .card { width:min(520px, 92vw); background:#1b1b1b; border:1px solid #2a2a2a; border-radius:16px; padding:28px; text-align:center; }
+    h1 { margin:0 0 10px; font-size:28px; }
+    p { margin:0; opacity:.85; font-size:16px; }
+    .check { width:84px; height:84px; border-radius:50%; margin:18px auto 14px; background:#1f7a3a; display:flex; align-items:center; justify-content:center; font-size:44px; }
+    .muted { margin-top:16px; font-size:14px; opacity:.7; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="check">✓</div>
+    <h1>Betaald</h1>
+    <p>Betaling is ontvangen.</p>
+    <div class="muted" id="countdown"></div>
+  </div>
+
+  <script>
+    let seconds = 5;
+    const el = document.getElementById("countdown");
+
+    const t = setInterval(() => {
+      el.textContent = "Nieuwe betaling over " + seconds + " seconden.";
+      seconds--;
+      if (seconds < 0) {
+        clearInterval(t);
+        window.location.href = "/index.html";
+      }
+    }, 1000);
+  </script>
+</body>
+</html>
