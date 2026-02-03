@@ -1,27 +1,205 @@
 <!doctype html>
 <html lang="nl">
 <head>
-  <meta charset="utf-8">
-  <title>Bedankt!</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EazyPay Kassa</title>
+
+  <!-- QR lib (browser) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
   <style>
-    body {
-      background:#111;
-      color:#fff;
-      font-family:Arial;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      height:100vh;
-      text-align:center;
-    }
+    body { font-family: Arial, sans-serif; background:#111; color:#fff; margin:0; padding:30px; }
+    .card { max-width:520px; margin:0 auto; background:#1b1b1b; border:1px solid #2a2a2a; border-radius:12px; padding:20px; }
+    label { display:block; margin:12px 0 6px; font-size:14px; opacity:.9; }
+    input { width:100%; padding:12px; border-radius:10px; border:1px solid #333; background:#0f0f0f; color:#fff; box-sizing:border-box; }
+    button { width:100%; padding:12px; border-radius:10px; border:0; cursor:pointer; background:#2d6cdf; color:#fff; font-size:16px; margin-top:14px; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .row { margin-top:14px; }
+    .muted { opacity:.8; font-size:14px; }
+    #qrcode { background:#fff; padding:14px; display:inline-block; border-radius:10px; }
+    .center { text-align:center; }
+    .error { background:#3a1111; border:1px solid #6b2222; padding:12px; border-radius:10px; margin-top:12px; white-space:pre-wrap; }
+    .success { background:#0f2b16; border:1px solid #1f6b35; padding:12px; border-radius:10px; margin-top:12px; white-space:pre-wrap; }
   </style>
 </head>
+
 <body>
-  <div>
-    <h1>Bedankt voor uw betaling</h1>
-    <p>De betaling is succesvol ontvangen.</p>
-    <img src="https://media.giphy.com/media/26ufdipQqU2lhNA4g/giphy.gif" width="200">
+  <div class="card">
+    <h2>EazyPay Kassa</h2>
+    <p class="muted">Vul bedrag in, optioneel een referentie. Daarna krijg je een QR.</p>
+
+    <label>Bedrag (EUR)</label>
+    <input id="amount" type="text" value="1.00" placeholder="Bijv. 1.00" />
+
+    <label>Omschrijving / referentie (optioneel)</label>
+    <input id="reference" type="text" placeholder="Bijv. Factuur 2026-001 of Naam" />
+
+    <button id="btn">Toon QR</button>
+
+    <div class="row center">
+      <div class="muted" id="payText">Te betalen: €1.00</div>
+    </div>
+
+    <div class="row center" id="qrWrap" style="display:none;">
+      <div id="qrcode"></div>
+      <div class="muted" style="margin-top:10px;">Scan de QR om te betalen.</div>
+      <div class="muted" id="pollText" style="margin-top:10px; display:none;">Wachten op betaling...</div>
+    </div>
+
+    <div class="row" id="okWrap" style="display:none;">
+      <div class="success" id="okBox"></div>
+    </div>
+
+    <div class="row" id="errWrap" style="display:none;">
+      <div class="error" id="errBox"></div>
+    </div>
   </div>
+
+  <script>
+    const amountEl = document.getElementById("amount");
+    const refEl = document.getElementById("reference");
+    const btn = document.getElementById("btn");
+    const payText = document.getElementById("payText");
+
+    const qrWrap = document.getElementById("qrWrap");
+    const qrEl = document.getElementById("qrcode");
+    const pollText = document.getElementById("pollText");
+
+    const errWrap = document.getElementById("errWrap");
+    const errBox = document.getElementById("errBox");
+
+    const okWrap = document.getElementById("okWrap");
+    const okBox = document.getElementById("okBox");
+
+    let pollTimer = null;
+    let currentTxn = null; // transactionId van Pay.nl
+
+    function setError(msg) {
+      errWrap.style.display = "block";
+      errBox.textContent = msg;
+    }
+    function clearError() {
+      errWrap.style.display = "none";
+      errBox.textContent = "";
+    }
+    function setOk(msg) {
+      okWrap.style.display = "block";
+      okBox.textContent = msg;
+    }
+    function clearOk() {
+      okWrap.style.display = "none";
+      okBox.textContent = "";
+    }
+
+    function updatePayText() {
+      const val = String(amountEl.value || "").trim();
+      payText.textContent = "Te betalen: €" + (val || "0.00");
+    }
+    amountEl.addEventListener("input", updatePayText);
+    updatePayText();
+
+    function stopPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+      pollText.style.display = "none";
+    }
+
+    async function pollStatus() {
+      if (!currentTxn) return;
+
+      try {
+        const resp = await fetch("/.netlify/functions/status?transactionId=" + encodeURIComponent(currentTxn), {
+          method: "GET"
+        });
+
+        const data = await resp.json().catch(() => ({}));
+        // We verwachten iets als: { status: "PENDING" | "PAID" | ... }
+        const s = String(data.status || data.state || "").toUpperCase();
+
+        if (s === "PAID" || s === "SUCCESS") {
+          stopPolling();
+
+          // QR weg + duidelijk “betaald”
+          qrWrap.style.display = "none";
+          qrEl.innerHTML = "";
+          setOk("Betaling ontvangen.");
+
+          // Optioneel: ga naar apart kassascherm
+          window.location.href = "/kassa-betaald.html";
+        }
+      } catch (e) {
+        // Niet elke poll-error hard tonen (kan irritant zijn)
+        console.log("poll error", e);
+      }
+    }
+
+    async function createPayment() {
+      clearError();
+      clearOk();
+      stopPolling();
+
+      qrWrap.style.display = "none";
+      qrEl.innerHTML = "";
+      currentTxn = null;
+
+      const amount = String(amountEl.value || "").trim();
+      const reference = String(refEl.value || "").trim();
+
+      btn.disabled = true;
+      btn.textContent = "Bezig...";
+
+      try {
+        const resp = await fetch("/.netlify/functions/create-paylink", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amount, reference })
+        });
+
+        const text = await resp.text();
+        let json;
+        try { json = JSON.parse(text); } catch { json = { raw: text }; }
+
+        if (!resp.ok) {
+          setError("Fout bij aanmaken betaling:\n\n" + JSON.stringify(json, null, 2));
+          return;
+        }
+
+        const paymentUrl = json.paymentUrl || json.paymentURL || json.url;
+        const transactionId = json.transactionId || (json.transaction && json.transaction.transactionId);
+
+        if (!paymentUrl) {
+          setError("Geen geldige paymentUrl ontvangen:\n\n" + JSON.stringify(json, null, 2));
+          return;
+        }
+        if (!transactionId) {
+          setError("Geen transactionId ontvangen:\n\n" + JSON.stringify(json, null, 2));
+          return;
+        }
+
+        currentTxn = String(transactionId);
+
+        // QR genereren (KASSA blijft op deze pagina, GEEN redirect naar paymentUrl)
+        if (typeof QRCode === "undefined") {
+          setError("QRCode library is niet geladen. Controleer de script-tag in <head>.");
+          return;
+        }
+
+        new QRCode(qrEl, { text: paymentUrl, width: 260, height: 260 });
+        qrWrap.style.display = "block";
+
+        // Start polling (kassa detecteert betaling)
+        pollText.style.display = "block";
+        pollTimer = setInterval(pollStatus, 2000);
+      } catch (e) {
+        setError("Fout bij aanmaken betaling:\n\n" + (e?.message || String(e)));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Toon QR";
+      }
+    }
+
+    btn.addEventListener("click", createPayment);
+  </script>
 </body>
 </html>
