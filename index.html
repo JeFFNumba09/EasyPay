@@ -5,33 +5,100 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>EazyPay Kassa</title>
 
+  <!-- QRCode library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
   <style>
-    body { font-family: Arial, sans-serif; background:#111; color:#fff; margin:0; padding:30px; }
-    .card { max-width:520px; margin:0 auto; background:#1b1b1b; border:1px solid #2a2a2a; border-radius:12px; padding:20px; }
-    label { display:block; margin:12px 0 6px; font-size:14px; opacity:.9; }
-    input { width:100%; padding:12px; border-radius:10px; border:1px solid #333; background:#0f0f0f; color:#fff; box-sizing:border-box; }
-    button { width:100%; padding:12px; border-radius:10px; border:0; cursor:pointer; background:#2d6cdf; color:#fff; font-size:16px; margin-top:14px; }
-    button:disabled { opacity:.6; cursor:not-allowed; }
-    .row { margin-top:14px; }
-    .muted { opacity:.8; font-size:14px; }
-    #qrcode { background:#fff; padding:14px; display:inline-block; border-radius:10px; }
-    .center { text-align:center; }
-    .error { background:#3a1111; border:1px solid #6b2222; padding:12px; border-radius:10px; margin-top:12px; white-space:pre-wrap; }
+    body {
+      font-family: Arial, sans-serif;
+      background:#111;
+      color:#fff;
+      margin:0;
+      padding:30px;
+    }
+
+    .card {
+      max-width:520px;
+      margin:0 auto;
+      background:#1b1b1b;
+      border:1px solid #2a2a2a;
+      border-radius:12px;
+      padding:20px;
+    }
+
+    label {
+      display:block;
+      margin:12px 0 6px;
+      font-size:14px;
+      opacity:.9;
+    }
+
+    input {
+      width:100%;
+      padding:12px;
+      border-radius:10px;
+      border:1px solid #333;
+      background:#0f0f0f;
+      color:#fff;
+      box-sizing:border-box;
+    }
+
+    button {
+      width:100%;
+      padding:12px;
+      border-radius:10px;
+      border:0;
+      cursor:pointer;
+      background:#2d6cdf;
+      color:#fff;
+      font-size:16px;
+      margin-top:14px;
+    }
+
+    .row {
+      margin-top:14px;
+    }
+
+    .center {
+      text-align:center;
+    }
+
+    .muted {
+      opacity:.8;
+      font-size:14px;
+    }
+
+    #qrcode {
+      background:#fff;
+      padding:14px;
+      display:inline-block;
+      border-radius:10px;
+    }
+
+    .error {
+      background:#3a1111;
+      border:1px solid #6b2222;
+      padding:12px;
+      border-radius:10px;
+      margin-top:12px;
+      white-space:pre-wrap;
+    }
   </style>
 </head>
 
 <body>
+
   <div class="card">
     <h2>EazyPay Kassa</h2>
-    <p class="muted">Vul bedrag in, optioneel een referentie. Daarna krijg je een QR.</p>
+    <p class="muted">
+      Vul bedrag in, optioneel een referentie. Daarna krijg je een QR.
+    </p>
 
     <label>Bedrag (EUR)</label>
     <input id="amount" type="text" value="1.00" />
 
     <label>Omschrijving / referentie (optioneel)</label>
-    <input id="reference" type="text" value="test" />
+    <input id="reference" type="text" />
 
     <button id="btn">Toon QR</button>
 
@@ -41,7 +108,9 @@
 
     <div class="row center" id="qrWrap" style="display:none;">
       <div id="qrcode"></div>
-      <div class="muted" style="margin-top:10px;">Scan de QR om te betalen.</div>
+      <div class="muted" style="margin-top:10px;">
+        Scan de QR om te betalen.
+      </div>
     </div>
 
     <div class="row" id="errWrap" style="display:none;">
@@ -59,7 +128,17 @@
     const errBox = document.getElementById("errBox");
     const qrEl = document.getElementById("qrcode");
 
-    function setError(msg) {
+    let transactionId = null;
+    let pollTimer = null;
+
+    function updatePayText() {
+      payText.textContent = "Te betalen: €" + (amountEl.value || "0.00");
+    }
+
+    amountEl.addEventListener("input", updatePayText);
+    updatePayText();
+
+    function showError(msg) {
       errWrap.style.display = "block";
       errBox.textContent = msg;
     }
@@ -69,21 +148,10 @@
       errBox.textContent = "";
     }
 
-    function updatePayText() {
-      const val = String(amountEl.value || "").trim();
-      payText.textContent = "Te betalen: €" + (val || "0.00");
-    }
-
-    amountEl.addEventListener("input", updatePayText);
-    updatePayText();
-
     async function createPayment() {
       clearError();
       qrWrap.style.display = "none";
       qrEl.innerHTML = "";
-
-      const amount = String(amountEl.value || "").trim();
-      const reference = String(refEl.value || "").trim();
 
       btn.disabled = true;
       btn.textContent = "Bezig...";
@@ -92,47 +160,61 @@
         const resp = await fetch("/.netlify/functions/create-paylink", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ amount, reference })
+          body: JSON.stringify({
+            amount: amountEl.value,
+            reference: refEl.value
+          })
         });
 
-        const rawText = await resp.text();
-        let json;
-        try { json = JSON.parse(rawText); } catch { json = { raw: rawText }; }
+        const data = await resp.json();
 
-        if (!resp.ok) {
-          setError("Fout bij aanmaken betaling:\n\n" + JSON.stringify(json, null, 2));
-          return;
+        if (!data.paymentUrl || !data.transactionId) {
+          throw new Error("Geen geldige betaalgegevens ontvangen");
         }
 
-        const paymentUrl =
-          json.paymentUrl ||
-          json.url ||
-          json.payment_url ||
-          json.paymentLink ||
-          (json.data && (json.data.paymentUrl || json.data.url));
+        transactionId = data.transactionId;
 
-        if (!paymentUrl) {
-          setError("Geen geldige paymentUrl ontvangen.\n\nResponse:\n" + JSON.stringify(json, null, 2));
-          return;
-        }
+        new QRCode(qrEl, {
+          text: data.paymentUrl,
+          width: 260,
+          height: 260
+        });
 
-        if (typeof QRCode === "undefined") {
-          setError("QRCode library niet geladen.");
-          return;
-        }
-
-        new QRCode(qrEl, { text: paymentUrl, width: 260, height: 260 });
         qrWrap.style.display = "block";
-      } catch (e) {
-        setError("Fout bij aanmaken betaling:\n\n" + (e?.message || String(e)));
+        startPolling();
+
+      } catch (err) {
+        showError(err.message);
       } finally {
         btn.disabled = false;
         btn.textContent = "Toon QR";
       }
     }
 
+    function startPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+
+      pollTimer = setInterval(async () => {
+        try {
+          const resp = await fetch(
+            "/.netlify/functions/status?transactionId=" + transactionId
+          );
+          const data = await resp.json();
+
+          // Pay.nl status 100 = betaald
+          if (data?.transaction?.state === 100) {
+            clearInterval(pollTimer);
+            window.location.href = "/Klaar.html";
+          }
+
+        } catch (e) {
+          console.error("Status check mislukt", e);
+        }
+      }, 3000);
+    }
+
     btn.addEventListener("click", createPayment);
   </script>
+
 </body>
 </html>
-
