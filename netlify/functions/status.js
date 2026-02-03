@@ -1,71 +1,82 @@
-<!doctype html>
-<html lang="nl">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Betaald</title>
-  <style>
-    body { margin:0; font-family: Arial, sans-serif; background:#111; color:#fff; display:flex; align-items:center; justify-content:center; min-height:100vh; }
-    .card { width:min(520px, 92vw); background:#1b1b1b; border:1px solid #2a2a2a; border-radius:16px; padding:28px; text-align:center; }
-    h1 { margin:0 0 10px; font-size:28px; }
-    p { margin:0; opacity:.85; font-size:16px; }
-    .check {
-      width:84px; height:84px; border-radius:50%;
-      margin:18px auto 14px;
-      background:#1f7a3a;
-      display:flex; align-items:center; justify-content:center;
-      font-size:44px;
-    }
-    .gif {
-      margin:14px auto 0;
-      width:160px; height:160px;
-      border-radius:12px;
-      overflow:hidden;
-      background:#0f0f0f;
-      display:flex; align-items:center; justify-content:center;
-      opacity:.95;
-    }
-    .gif img { width:100%; height:100%; object-fit:cover; display:block; }
-    .muted { margin-top:16px; font-size:14px; opacity:.7; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="check">✓</div>
-    <h1>Betaald</h1>
-    <p>Bedankt. De betaling is ontvangen.</p>
+// netlify/functions/status.js  (CommonJS)
 
-    <!-- Optioneel: gifje -->
-    <div class="gif" id="gifWrap" style="display:none;">
-      <img id="thanksGif" alt="Bedankt" />
-    </div>
-
-    <div class="muted" id="countdown"></div>
-  </div>
-
-  <script>
-    // Optioneel gifje aanzetten:
-    // Zet hieronder jouw eigen gif-url, of laat dit uit als je geen gif wil.
-    const GIF_URL = ""; 
-    // voorbeeld (mag, maar hoeft niet): 
-    // const GIF_URL = "https://media.giphy.com/media/111ebonMs90YLu/giphy.gif";
-
-    if (GIF_URL) {
-      document.getElementById("thanksGif").src = GIF_URL;
-      document.getElementById("gifWrap").style.display = "flex";
+exports.handler = async (event) => {
+  try {
+    if (event.httpMethod !== "GET") {
+      return json(405, { error: "Method not allowed" });
     }
 
-    // Auto terug naar kassa (handig voor volgende klant)
-    let seconds = 8;
-    const el = document.getElementById("countdown");
-    const timer = setInterval(() => {
-      el.textContent = "Terug naar kassa over " + seconds + " seconden.";
-      seconds--;
-      if (seconds < 0) {
-        clearInterval(timer);
-        window.location.href = "/index.html";
-      }
-    }, 1000);
-  </script>
-</body>
-</html>
+    const transactionId = String(event.queryStringParameters?.transactionId || "").trim();
+    if (!transactionId) {
+      return json(400, { error: "transactionId is required" });
+    }
+
+    const SERVICE_ID = process.env.PAYNL_SERVICE_ID;
+    const API_TOKEN = process.env.PAYNL_API_TOKEN;
+
+    if (!SERVICE_ID || !API_TOKEN) {
+      return json(500, { error: "Missing PAYNL_SERVICE_ID or PAYNL_API_TOKEN in env vars" });
+    }
+
+    // Pay.nl Transaction/info
+    const endpoint = "https://rest-api.pay.nl/v14/Transaction/info/json";
+    const params = new URLSearchParams({
+      token: API_TOKEN,
+      serviceId: SERVICE_ID,
+      transactionId: transactionId
+    });
+
+    const url = `${endpoint}?${params.toString()}`;
+
+    const resp = await fetch(url, { method: "GET" });
+    const data = await resp.json().catch(() => ({}));
+
+    const result = Number(data?.request?.result || 0);
+    if (result !== 1) {
+      return json(400, { error: "Pay.nl API call failed", response: data });
+    }
+
+    // Pay.nl heeft verschillende velden per versie/account, daarom vangen we meerdere:
+    // vaak: data.paymentDetails.stateName / data.transaction.stateName / data.transactionDetails.stateName
+    const raw =
+      data?.paymentDetails?.stateName ||
+      data?.transaction?.stateName ||
+      data?.transactionDetails?.stateName ||
+      data?.stateName ||
+      "";
+
+    const status = String(raw).toUpperCase();
+
+    // We sturen exact terug wat index.html verwacht:
+    // { status: "PAID" } zodra betaald
+    // anders bijv. "PENDING"
+    return json(200, {
+      status: normalizeStatus(status),
+      rawStatus: raw,
+      transactionId
+    });
+  } catch (err) {
+    return json(500, { error: err?.message || String(err) });
+  }
+};
+
+// ===== Helpers =====
+
+function json(statusCode, obj) {
+  return {
+    statusCode,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*"
+    },
+    body: JSON.stringify(obj)
+  };
+}
+
+function normalizeStatus(s) {
+  // maak hem robuust: Pay.nl kan bijv "PAID", "SUCCESS", "PENDING", "CANCEL", etc teruggeven
+  if (s.includes("PAID") || s.includes("SUCCESS")) return "PAID";
+  if (s.includes("CANCEL") || s.includes("CANCELED")) return "CANCEL";
+  if (s.includes("EXPIRE")) return "EXPIRED";
+  return "PENDING";
+}
