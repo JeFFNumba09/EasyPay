@@ -1,4 +1,4 @@
-// netlify/functions/status.js  (CommonJS)
+// netlify/functions/status.js (CommonJS)
 
 exports.handler = async (event) => {
   try {
@@ -36,8 +36,6 @@ exports.handler = async (event) => {
       return json(400, { error: "Pay.nl API call failed", response: data });
     }
 
-    // Pay.nl heeft verschillende velden per versie/account, daarom vangen we meerdere:
-    // vaak: data.paymentDetails.stateName / data.transaction.stateName / data.transactionDetails.stateName
     const raw =
       data?.paymentDetails?.stateName ||
       data?.transaction?.stateName ||
@@ -45,13 +43,10 @@ exports.handler = async (event) => {
       data?.stateName ||
       "";
 
-    const status = String(raw).toUpperCase();
+    const status = normalizeStatus(String(raw).toUpperCase());
 
-    // We sturen exact terug wat index.html verwacht:
-    // { status: "PAID" } zodra betaald
-    // anders bijv. "PENDING"
     return json(200, {
-      status: normalizeStatus(status),
+      status,
       rawStatus: raw,
       transactionId
     });
@@ -74,7 +69,6 @@ function json(statusCode, obj) {
 }
 
 function normalizeStatus(s) {
-  // maak hem robuust: Pay.nl kan bijv "PAID", "SUCCESS", "PENDING", "CANCEL", etc teruggeven
   if (s.includes("PAID") || s.includes("SUCCESS")) return "PAID";
   if (s.includes("CANCEL") || s.includes("CANCELED")) return "CANCEL";
   if (s.includes("EXPIRE")) return "EXPIRED";
