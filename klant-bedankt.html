@@ -4,6 +4,15 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bedankt</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="EazyPay">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+
   <style>
     body { font-family: Arial, sans-serif; background:#111; color:#fff; margin:0; padding:30px; }
     .card { max-width:520px; margin:0 auto; background:#1b1b1b; border:1px solid #2a2a2a; border-radius:12px; padding:26px; text-align:center; }
@@ -16,7 +25,8 @@
     <h2>Bedankt voor uw betaling</h2>
     <p class="muted">De betaling is succesvol ontvangen.</p>
 
-    <img src="https://media.giphy.com/media/111ebonMS90YLu/giphy.gif" alt="Bedankt" />
+    <!-- Als je een eigen gif wil: zet bedankt.gif in de root en gebruik: src="/bedankt.gif" -->
+    <img src="https://media.giphy.com/media/111ebonMs90YLu/giphy.gif" alt="Bedankt" />
   </div>
 </body>
 </html>
