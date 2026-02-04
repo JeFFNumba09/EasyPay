@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>EazyPay Kassa</title>
 
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="EazyPay">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+
   <!-- QR lib (browser) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
@@ -21,14 +29,8 @@
     .center { text-align:center; }
     .error { background:#3a1111; border:1px solid #6b2222; padding:12px; border-radius:10px; margin-top:12px; white-space:pre-wrap; }
     .success { background:#0f2b16; border:1px solid #1f6b35; padding:12px; border-radius:10px; margin-top:12px; white-space:pre-wrap; }
-
-    /* Groen vinkje */
     .checkWrap { display:flex; gap:10px; justify-content:center; align-items:center; margin-top:6px; }
-    .check {
-      width:28px; height:28px; border-radius:50%;
-      background:#1f6b35; display:inline-flex; align-items:center; justify-content:center;
-      font-weight:bold;
-    }
+    .check { width:28px; height:28px; border-radius:50%; background:#1f6b35; display:inline-flex; align-items:center; justify-content:center; font-weight:bold; }
   </style>
 </head>
 
@@ -65,6 +67,18 @@
   </div>
 
   <script>
+    // Service worker registratie (PWA)
+    (function registerSW() {
+      if (!("serviceWorker" in navigator)) return;
+      window.addEventListener("load", async () => {
+        try {
+          await navigator.serviceWorker.register("/service-worker.js");
+        } catch (e) {
+          console.log("SW register failed", e);
+        }
+      });
+    })();
+
     const amountEl = document.getElementById("amount");
     const refEl = document.getElementById("reference");
     const btn = document.getElementById("btn");
@@ -81,7 +95,7 @@
     const okBox = document.getElementById("okBox");
 
     let pollTimer = null;
-    let currentTxn = null; // transactionId van Pay.nl
+    let currentTxn = null;
 
     function setError(msg) {
       errWrap.style.display = "block";
@@ -122,24 +136,15 @@
       if (!currentTxn) return;
 
       try {
-        const resp = await fetch("/.netlify/functions/status?transactionId=" + encodeURIComponent(currentTxn), {
-          method: "GET"
-        });
-
+        const resp = await fetch("/.netlify/functions/status?transactionId=" + encodeURIComponent(currentTxn));
         const data = await resp.json().catch(() => ({}));
         const s = String(data.status || "").toUpperCase();
 
         if (s === "PAID") {
           stopPolling();
-
-          // QR weg + groen vinkje
           qrWrap.style.display = "none";
           qrEl.innerHTML = "";
           setOkPaid();
-
-          // Belangrijk: GEEN redirect. Kassa blijft hier.
-          // Als je wél een aparte kassapagina wilt, gebruik dan:
-          // window.location.href = "/kassa-betaald.html";
         }
       } catch (e) {
         console.log("poll error", e);
@@ -180,19 +185,15 @@
         const paymentUrl = json.paymentUrl;
         const transactionId = json.transactionId;
 
-        if (!paymentUrl) {
-          setError("Geen geldige paymentUrl ontvangen:\n\n" + JSON.stringify(json, null, 2));
-          return;
-        }
-        if (!transactionId) {
-          setError("Geen transactionId ontvangen:\n\n" + JSON.stringify(json, null, 2));
+        if (!paymentUrl || !transactionId) {
+          setError("Geen paymentUrl/transactionId ontvangen:\n\n" + JSON.stringify(json, null, 2));
           return;
         }
 
         currentTxn = String(transactionId);
 
         if (typeof QRCode === "undefined") {
-          setError("QRCode library is niet geladen. Controleer de script-tag in <head>.");
+          setError("QRCode library is niet geladen.");
           return;
         }
 
